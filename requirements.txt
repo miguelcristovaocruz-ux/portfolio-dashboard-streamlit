@@ -6,5 +6,10 @@ plotly
 scipy
 kaleido
 google-generativeai
-newspaper3k
 requests
+scipy
+yfinance
+openpyxl
+feedparser
+certifi
+beautifulsoup4
