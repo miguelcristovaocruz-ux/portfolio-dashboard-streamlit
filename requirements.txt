@@ -1,0 +1,10 @@
+streamlit
+yahooquery
+pandas
+numpy
+plotly
+scipy
+kaleido
+google-generativeai
+newspaper3k
+requests
