@@ -8,12 +8,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.optimize import minimize
 from yahooquery import Ticker
-from newspaper import Article
 import google.generativeai as genai
 from datetime import datetime, timedelta
 import feedparser
 from openpyxl import Workbook
-
 
 # ============= Config e Env =============
 st.set_page_config(
