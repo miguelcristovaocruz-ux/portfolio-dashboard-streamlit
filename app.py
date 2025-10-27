@@ -10,8 +10,11 @@ from scipy.optimize import minimize
 from yahooquery import Ticker
 import google.generativeai as genai
 from datetime import datetime, timedelta
-import feedparser
 from openpyxl import Workbook
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
 
 # ============= Config e Env =============
 st.set_page_config(
@@ -19,7 +22,6 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
-
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
@@ -315,50 +317,57 @@ def fetch_and_summarize_news(topk: int = 6):
     else:
         return "\n\n".join(blocos[:3])
 
-# ==========================================================
-# Filtragem de notícias por assuntos e termos adicionais
-# ==========================================================
+
+# ==========================
+# 🔍 FILTRAGEM DE NOTÍCIAS (versão revisada, sem newspaper)
+# ==========================
 
 def match_any(text: str, words: list[str]) -> bool:
-    """Verifica se algum termo aparece no texto (case-insensitive)."""
+    """Retorna True se qualquer termo da lista estiver no texto."""
     t = (text or "").lower()
     return any(w.lower() in t for w in words if w)
 
-# Dicionário de assuntos e respectivos termos
-NEWS_TOPICS = {
-    "General News": ["S&P 500", "inflation", "Fed", "interest", "Congress", "Trump"],
-    "Energy": ["Oil", "Petróleo", "OPEP", "OPEC", "tariffs", "Shell", "Exxon"],
-    "Tech": ["AI", "Nvidia", "Technology"],
-    "World": ["Germany", "Japan", "DE40", "DAX", "Nikkei 225"],
-    "Industry": ["Industrial production", "Industrials", "materials", "manufacturing"],
-}
+def fetch_article_text(url: str) -> str:
+    """Tenta extrair o texto principal de uma página de notícia usando requests + BeautifulSoup."""
+    try:
+        resp = requests.get(url, timeout=8)
+        if resp.status_code != 200:
+            return ""
+        soup = BeautifulSoup(resp.text, "html.parser")
+        paragraphs = [p.get_text(strip=True) for p in soup.find_all("p")]
+        text = " ".join(paragraphs[:20])  # limita pra performance
+        return text[:2000]  # evita textos muito longos
+    except Exception:
+        return ""
+
+# ==========================
+# 🔧 FUNÇÃO PRINCIPAL DE BUSCA DE NOTÍCIAS
+# ==========================
 
 @st.cache_data(ttl=1800)
-def fetch_news_by_period(topic: str, days: int = 3, weeks: int = 3, topk: int = 5):
+def fetch_news_by_period(topic: str, terms: list[str], days: int = 3, weeks: int = 3, topk: int = 5):
     """
-    Busca notícias recentes relacionadas a um assunto específico (topic)
-    dentro de um conjunto de feeds RSS definidos globalmente.
+    Busca e formata notícias recentes a partir de múltiplos feeds RSS,
+    filtrando por termos específicos de cada assunto.
     """
     base_dt = datetime.utcnow()
-    date_from_daily  = base_dt - timedelta(days=days)
+    date_from_daily = base_dt - timedelta(days=days)
     date_from_recent = base_dt - timedelta(weeks=weeks)
-    date_to_recent   = base_dt - timedelta(days=days + 1)
+    date_to_recent = base_dt - timedelta(days=days + 1)
 
-    termos = NEWS_TOPICS.get(topic, [])
     artigos = []
     for feed_url in RSS_FEEDS:
         feed = feedparser.parse(feed_url)
         for e in feed.entries:
             title = e.title
-            desc  = e.get("summary", "")
-            if match_any(title + " " + desc, termos):
+            desc = e.get("summary", "")
+            if match_any(title + " " + desc, terms):
                 try:
                     pub_dt = datetime(*e.published_parsed[:6])
                 except Exception:
                     continue
                 artigos.append({"entry": e, "pub": pub_dt})
 
-    # Divide em notícias muito recentes (últimos dias) e recentes (últimas semanas)
     daily = [a["entry"] for a in artigos if a["pub"] >= date_from_daily]
     recent = [a["entry"] for a in artigos if (date_from_recent <= a["pub"] <= date_to_recent)]
 
@@ -370,7 +379,9 @@ def fetch_news_by_period(topic: str, days: int = 3, weeks: int = 3, topk: int = 
         for e in lista:
             src = e.get("source", "RSS")
             pub = e.get("published", "")
-            out.append(f"* [{e.title}]({e.link}) — _{src} • {pub}_")
+            link = e.link
+            preview = fetch_article_text(link)
+            out.append(f"* [{e.title}]({link}) — _{src} • {pub}_\n> {preview[:300]}...")
         return "\n".join(out)
 
     return fmt(daily), fmt(recent)
@@ -1209,19 +1220,6 @@ with tab_forecast:
     final_vals = paths[:, -1]
     fig_hist = px.histogram(final_vals, nbins=50, title="Distribuição do Valor Final")
     st.plotly_chart(fig_hist, use_container_width=True)
-
-# ============= NOTÍCIAS =============
-with tab_news:
-    st.subheader("Notícias e Análise IA")
-    st.markdown("### 🗓 Notícias Diárias e Recentes por Assunto")
-   
-    for topic in NEWS_TOPICS.keys():
-        st.subheader(f"📂 {topic}")
-        daily, recent = fetch_news_by_period(topic)
-        st.markdown(f"**Últimos 3 dias:**\n{daily}", unsafe_allow_html=True)
-        st.markdown(f"*Últimas 3 semanas (excl. últimos 3 dias):*\n{recent}", unsafe_allow_html=True)
-        st.markdown("---")
-
 
 # ============= CHAT (contexto completo, mas oculto na UI) =============
 with tab_chat:
