@@ -13,3 +13,4 @@ openpyxl
 feedparser
 certifi
 beautifulsoup4
+dotenv
