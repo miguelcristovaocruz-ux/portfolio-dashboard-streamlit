@@ -479,102 +479,75 @@ if "CASH" in rets.columns:
 def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], initial_cash: float):
     """
     Reconstrói posições diárias (holdings), caixa e curva de valor a partir de um ledger de trades.
-
-    Regras implementadas:
-    - Stop loss EOD: se o retorno de FECHAMENTO de um dia for <= -4%, a posição é zerada
-      e convertida em caixa NO DIA SEGUINTE.
-    - Stop começa a valer somente a partir de 19/10/2025.
-    - Toda a lógica usa indexação por posição (iloc) para evitar KeyError de datas.
+    Inclui stop-loss de 4% a partir de 19/10/2025 e permite reentradas subsequentes.
     """
     if prices_df.empty:
         return None
 
-    # Garantir índice DateTime ordenado e base única
-    prices_df = prices_df.sort_index()
-    prices_df.index = pd.to_datetime(prices_df.index)
     idx = prices_df.index
     symbols = list(prices_df.columns)
 
-    # ---- Trades em matriz diária
     tr = pd.DataFrame(trades)
-    if not tr.empty:
-        tr = tr.sort_values("date").reset_index(drop=True)
+    tr = tr.sort_values("date").reset_index(drop=True)
 
     exec_df = pd.DataFrame(0.0, index=idx, columns=symbols)
-    cash_moves = pd.Series(0.0, index=idx, dtype=float)
+    cash_moves = pd.Series(0.0, index=idx)
 
-    # Registra execuções em dias úteis (bfill para feriados/fds)
-    if not tr.empty:
-        for _, row in tr.iterrows():
-            d = pd.Timestamp(row["date"])
-            # se a data não está no índice, desloca para o próximo dia útil disponível
-            if d not in idx:
-                pos = idx.get_indexer([d], method="bfill")[0]
-                if pos == -1:
-                    # não há dia útil à frente — ignora este trade
-                    continue
-                d = idx[pos]
-            sym = str(row["ticker"]).upper()
-            if sym not in exec_df.columns:
-                continue  # ignora símbolo sem preço
-            qty = float(row["qty"])
-            px  = float(row["price"])
-            exec_df.loc[d, sym] += qty
-            cash_moves.loc[d]   -= qty * px
+    # Aplica as execuções de compra/venda do ledger
+    for _, row in tr.iterrows():
+        d = pd.Timestamp(row["date"])
+        if d not in exec_df.index:
+            d = exec_df.index[exec_df.index.get_indexer([d], method="bfill")][0]
+        sym = row["ticker"].upper()
+        if sym not in exec_df.columns:
+            continue
+        qty = float(row["qty"])
+        px = float(row["price"])
+        exec_df.loc[d, sym] += qty
+        cash_moves.loc[d] -= qty * px
 
-    # ---- Holdings e caixa (cumulativos)
+    # Posições acumuladas
     holdings = exec_df.cumsum()
-    cash = cash_moves.cumsum() + float(initial_cash) - 284_515.0
+    cash = cash_moves.cumsum() + initial_cash
 
-    # ---- STOP LOSS EOD (aplica no dia seguinte)
+    # Stop-loss de -4% a partir de 19/10/2025
     stop_threshold = -0.04
-    stop_start_date = pd.Timestamp("2025-10-19")
+    stop_start_date = pd.Timestamp(2025, 10, 19)
 
-    # retornos de fechamento para fechamento, alinhados ao índice base
-    returns = prices_df.pct_change().reindex(idx).fillna(0.0)
+    returns = prices_df.pct_change().fillna(0.0)
 
-    # Laço por símbolo com indexação posicional (robusto)
     for sym in symbols:
-        # se por algum motivo não temos a coluna, ignora
         if sym not in holdings.columns:
             continue
 
-        # vetor booleano dos dias com retorno <= limiar e data >= stop_start_date
-        mask = (idx >= stop_start_date) & (returns[sym].values <= stop_threshold)
-        stop_positions = np.where(mask)[0]  # posições inteiras no índice
+        valid_dates = returns.index[returns.index >= stop_start_date]
+        stop_days = [d for d in valid_dates if returns.loc[d, sym] <= stop_threshold]
 
-        if stop_positions.size == 0:
-            continue
+        if len(stop_days) > 0:
+            for d in stop_days:
+                if d not in holdings.index or d not in prices_df.index:
+                    continue
+                position_value = holdings.loc[d, sym] * prices_df.loc[d, sym]
+                # Converte posição em caixa
+                cash.loc[d:] += position_value
+                # Zera a posição a partir do stop
+                holdings.loc[d:, sym] = 0.0
+                # Verifica novas compras posteriores (reentrada)
+                future_trades = tr[(tr["ticker"] == sym) & (tr["date"] > d.date())]
+                for _, t in future_trades.iterrows():
+                    td = pd.Timestamp(t["date"])
+                    if td in holdings.index:
+                        holdings.loc[td:, sym] += t["qty"]
+                        cash.loc[td:] -= t["qty"] * t["price"]
 
-        for i in stop_positions:
-            # executa no dia seguinte (i+1)
-            exec_pos = i + 1
-            if exec_pos >= len(idx):
-                # não há dia seguinte na série — nada a fazer
-                continue
-
-            # valor da posição no DIA DO SINAL (fechamento do dia i)
-            # (usa .iloc para não depender do label exato)
-            position_value = float(holdings.iloc[i][sym]) * float(prices_df.iloc[i][sym])
-
-            if position_value == 0.0:
-                # nada a converter em caixa
-                continue
-
-            # Move o valor para o caixa a partir do dia seguinte
-            cash.iloc[exec_pos:] = cash.iloc[exec_pos:] + position_value
-            # Zera a posição a partir do dia seguinte
-            col_pos = holdings.columns.get_loc(sym)
-            holdings.iloc[exec_pos:, col_pos] = 0.0
-
-    # ---- Série de valor do portfólio e retornos
+    # Valor total do portfólio
     port_value = (holdings * prices_df).sum(axis=1) + cash
     port_ret = port_value.pct_change().fillna(0.0)
 
-    # Pesos por ativo (sem CASH)
+    # Pesos diários (sem incluir cash como ativo)
     weights = (holdings * prices_df).div(port_value, axis=0).fillna(0.0)
 
-    # Percentual de caixa (armazenado separadamente, não como ativo)
+    # Peso de caixa calculado separadamente
     cash_weight = (cash / port_value).rename("CASH")
 
     return {
@@ -583,7 +556,7 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
         "cash_weight": cash_weight,
         "port_value": port_value,
         "port_ret": port_ret,
-        "weights": weights,
+        "weights": weights
     }
 
 # =========================
