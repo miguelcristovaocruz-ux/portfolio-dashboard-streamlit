@@ -75,6 +75,7 @@ TRADES_BOOK = [
     {"date": dt.date(2025, 10, 20), "ticker": "SPY", "qty": -13_500, "price": 667.32}, #redução de posição
     {"date": dt.date(2025, 10, 20), "ticker": "TLT", "qty": 165_000, "price": 91.46}, # começando posição
     {"date": dt.date(2025, 10, 20), "ticker": "GLD", "qty": 20_000, "price": 397.45}, # aumento de posição
+    {"date": dt.date(2025, 10, 21), "ticker": "GLD", "qty": -109_000, "price": 372.75}, # fomos stoppados
     {"date": dt.date(2025, 10, 27), "ticker": "GLD", "qty": 53_000, "price": 371.13}, # início de posição pós-stop
     {"date": dt.date(2025, 10, 27), "ticker": "XLF", "qty": 565_000, "price": 53.37}, # início de posição
     {"date": dt.date(2025, 10, 27), "ticker": "TLT", "qty": -165_000, "price": 95.00} # stop
@@ -479,84 +480,61 @@ if "CASH" in rets.columns:
 def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], initial_cash: float):
     """
     Reconstrói posições diárias (holdings), caixa e curva de valor a partir de um ledger de trades.
-    Inclui stop-loss de 4% a partir de 19/10/2025 e permite reentradas subsequentes.
+    Versão sem stop-loss. Mantém lógica completa de caixa, pesos e valor do portfólio.
     """
     if prices_df.empty:
         return None
 
+    # Índice e colunas base
     idx = prices_df.index
     symbols = list(prices_df.columns)
 
+    # Cria DataFrame de execuções e movimentações de caixa
     tr = pd.DataFrame(trades)
     tr = tr.sort_values("date").reset_index(drop=True)
-
     exec_df = pd.DataFrame(0.0, index=idx, columns=symbols)
     cash_moves = pd.Series(0.0, index=idx)
 
-    # Aplica as execuções de compra/venda do ledger
+    # --- Aplica cada trade no DataFrame de execuções ---
     for _, row in tr.iterrows():
         d = pd.Timestamp(row["date"])
         if d not in exec_df.index:
+            # Se for feriado ou fim de semana, aplica no próximo dia útil
             d = exec_df.index[exec_df.index.get_indexer([d], method="bfill")][0]
         sym = row["ticker"].upper()
         if sym not in exec_df.columns:
-            continue
+            continue  # ignora símbolos sem preço histórico
         qty = float(row["qty"])
         px = float(row["price"])
         exec_df.loc[d, sym] += qty
         cash_moves.loc[d] -= qty * px
 
-    # Posições acumuladas
+    # --- Calcula as posições acumuladas (cumsum) ---
     holdings = exec_df.cumsum()
+
+    # --- Calcula o caixa ao longo do tempo ---
     cash = cash_moves.cumsum() + initial_cash
 
-    # Stop-loss de -4% a partir de 19/10/2025
-    stop_threshold = -0.04
-    stop_start_date = pd.Timestamp(2025, 10, 19)
-
-    returns = prices_df.pct_change().fillna(0.0)
-
-    for sym in symbols:
-        if sym not in holdings.columns:
-            continue
-
-        valid_dates = returns.index[returns.index >= stop_start_date]
-        stop_days = [d for d in valid_dates if returns.loc[d, sym] <= stop_threshold]
-
-        if len(stop_days) > 0:
-            for d in stop_days:
-                if d not in holdings.index or d not in prices_df.index:
-                    continue
-                position_value = holdings.loc[d, sym] * prices_df.loc[d, sym]
-                # Converte posição em caixa
-                cash.loc[d:] += position_value
-                # Zera a posição a partir do stop
-                holdings.loc[d:, sym] = 0.0
-                # Verifica novas compras posteriores (reentrada)
-                future_trades = tr[(tr["ticker"] == sym) & (tr["date"] > d.date())]
-                for _, t in future_trades.iterrows():
-                    td = pd.Timestamp(t["date"])
-                    if td in holdings.index:
-                        holdings.loc[td:, sym] += t["qty"]
-                        cash.loc[td:] -= t["qty"] * t["price"]
-
-    # Valor total do portfólio
+    # --- Valor total do portfólio (ativos + caixa) ---
     port_value = (holdings * prices_df).sum(axis=1) + cash
+
+    # --- Retornos diários do portfólio ---
     port_ret = port_value.pct_change().fillna(0.0)
 
-    # Pesos diários (sem incluir cash como ativo)
+    # --- Pesos dos ativos (sem incluir o caixa como ativo) ---
     weights = (holdings * prices_df).div(port_value, axis=0).fillna(0.0)
 
-    # Peso de caixa calculado separadamente
+    # --- Peso de caixa calculado separadamente ---
     cash_weight = (cash / port_value).rename("CASH")
 
+    # --- Retorno final ---
     return {
         "holdings": holdings,
         "cash": cash,
         "cash_weight": cash_weight,
         "port_value": port_value,
         "port_ret": port_ret,
-        "weights": weights
+        "weights": weights,
     }
 
 # =========================
