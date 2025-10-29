@@ -1311,13 +1311,23 @@ with tab_realtime:
     if st.button("🔄 Atualizar agora"):
         with st.spinner("Buscando preços intradiários e recalculando..."):
             try:
-                current_prices = fetch_intraday_prices(tickers, interval="30m", lookback_days=2).iloc[-1]
+                # Busca preços intradiários
+                price_data = fetch_intraday_prices(tickers, interval="30m", lookback_days=2)
+
+                if price_data.empty or price_data.shape[0] == 0:
+                    st.error("⚠️ Nenhum dado intradiário retornado. Yahoo pode não ter dados recentes para esses ativos.")
+                    st.stop()
+
+                current_prices = price_data.iloc[-1].dropna()
 
                 # Pesos atuais (ledger ou fixos)
                 if use_ledger and ledger_ctx is not None:
                     weights_now = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
                 else:
                     weights_now = pd.Series(w_real, index=tickers)
+
+                # Ajusta pesos para só incluir ativos que têm preço válido
+                weights_now = weights_now.loc[weights_now.index.isin(current_prices.index)]
 
                 # Valor “normalizado” do portfólio (base relativa)
                 base_value = float((current_prices * weights_now).sum())
@@ -1373,4 +1383,3 @@ with tab_realtime:
 
     else:
         st.info("Nenhum dado intradiário disponível ainda. Clique em **'Atualizar agora'** para iniciar a coleta.")
-        
