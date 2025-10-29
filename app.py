@@ -1259,7 +1259,7 @@ with tab_chat:
 with tab_realtime:
     st.subheader("⏱ Atualização em Tempo Real")
     st.write(
-        "Monitora o valor e o retorno intradiário do portfólio em tempo real. "
+        "Monitora a evolução intradiária do portfólio em tempo real. "
         "Os dados são atualizados automaticamente a cada 30 minutos ou manualmente pelo botão abaixo."
     )
 
@@ -1284,19 +1284,17 @@ with tab_realtime:
                 end_date_intraday = now.date()
                 current_prices = fetch_prices_yq(tickers, start_date_intraday, end_date_intraday).iloc[-1]
 
-                # Calcula pesos atuais
+                # Pesos atuais
                 if use_ledger and ledger_ctx is not None:
                     weights_now = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
                 else:
                     weights_now = pd.Series(w_real, index=tickers)
 
-                # Corrige cálculo do valor (sem duplicar capital)
-                port_now_value = (weights_now * current_prices[weights_now.index]).sum()
-
-                # Adiciona valor e timestamp ao histórico
+                # Calcula valor normalizado (evolução relativa)
+                base_value = float((current_prices * weights_now).sum())
                 st.session_state["realtime_history"][today_str].append({
                     "timestamp": now,
-                    "value": port_now_value
+                    "value": base_value
                 })
 
                 st.success("Preços atualizados manualmente!")
@@ -1322,27 +1320,27 @@ with tab_realtime:
         # --- Mantém apenas pontos a partir das 07:00 ---
         hist_df = hist_df[hist_df["timestamp"].dt.hour >= 7]
 
-        # --- Agrupa por intervalos de 30 minutos e mantém o último valor ---
-        hist_df["interval"] = hist_df["timestamp"].dt.floor("30min")
-        hist_df = hist_df.groupby("interval", as_index=False).last()
+        # --- Normaliza valor (1.0 = início do dia)
+        hist_df["norm_value"] = hist_df["value"] / hist_df["value"].iloc[0]
+        hist_df["ret_pct"] = (hist_df["norm_value"] - 1) * 100
 
-        # --- Calcula retorno intradiário (%)
-        hist_df["ret"] = hist_df["value"].pct_change() * 100
-        intraday_ret = hist_df["ret"].iloc[-1] if not hist_df["ret"].isna().all() else 0.0
+        # --- Retorno intradiário
+        intraday_ret = hist_df["ret_pct"].iloc[-1] if not hist_df["ret_pct"].isna().all() else 0.0
 
         # --- Exibe métricas
-        st.metric("💰 Valor Atual do Portfólio", f"${hist_df['value'].iloc[-1]:,.0f}")
         st.metric("📊 Retorno Intraday", f"{intraday_ret:.2f}%")
 
         # --- Gráfico
         fig_intraday = px.line(
             hist_df,
-            x="interval",
-            y="ret",
-            title="Evolução Intradiária do Portfólio (%)",
-            labels={"interval": "Horário", "ret": "Retorno (%)"},
+            x="timestamp",
+            y="norm_value",
+            title="Evolução Intradiária Normalizada do Portfólio (Base = 1 às 07:00)",
+            labels={"timestamp": "Horário", "norm_value": "Valor Normalizado"},
         )
+        fig_intraday.update_layout(yaxis_tickformat=".3f")
         st.plotly_chart(fig_intraday, use_container_width=True)
 
     else:
         st.info("Nenhum dado intradiário disponível ainda. Clique em **'Atualizar agora'** para iniciar a coleta.")
+        
