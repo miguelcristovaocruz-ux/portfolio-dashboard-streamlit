@@ -1256,6 +1256,39 @@ with tab_chat:
 
 
 # ============= ATUALIZAÇÃO EM TEMPO REAL =============
+
+# --- Função auxiliar nova (coloque antes do bloco principal, junto das outras fetch_*)
+def fetch_intraday_prices(tickers, interval="30m", lookback_days=2):
+    """
+    Busca preços intradiários recentes para os tickers informados.
+    Usa YahooQuery com intervalos menores (5m, 15m, 30m, 1h).
+    """
+    from yahooquery import Ticker
+    import pandas as pd
+
+    all_data = {}
+    for tk in tickers:
+        try:
+            t = Ticker(tk)
+            hist = t.history(period=f"{lookback_days}d", interval=interval)
+            if isinstance(hist, pd.DataFrame) and not hist.empty:
+                if ("symbol" in hist.columns) and ("close" in hist.columns):
+                    df = hist.reset_index()[["date", "close"]].rename(columns={"date": "datetime", "close": tk})
+                    df = df.set_index("datetime")
+                    all_data[tk] = df[tk]
+        except Exception as e:
+            print(f"Erro ao buscar {tk}: {e}")
+            continue
+
+    if not all_data:
+        return pd.DataFrame()
+
+    df_final = pd.concat(all_data.values(), axis=1)
+    df_final = df_final.ffill().dropna(how="all")
+    return df_final
+
+
+# --- Aba principal
 with tab_realtime:
     st.subheader("⏱ Atualização em Tempo Real")
     st.write(
@@ -1268,30 +1301,28 @@ with tab_realtime:
     now = datetime.now(tz)
     today_str = now.strftime("%Y-%m-%d")
 
-    # ===================== Histórico de sessão =====================
+    # Histórico em memória da sessão
     if "realtime_history" not in st.session_state:
         st.session_state["realtime_history"] = {}
-
     if today_str not in st.session_state["realtime_history"]:
         st.session_state["realtime_history"][today_str] = []
 
-    # ===================== Atualização =====================
+    # Botão de atualização manual
     if st.button("🔄 Atualizar agora"):
-        with st.spinner("Atualizando preços e recalculando..."):
+        with st.spinner("Buscando preços intradiários e recalculando..."):
             try:
-                # Corrige formato das datas (usa apenas a parte de data, sem hora)
-                start_date_intraday = (now - timedelta(days=2)).date()
-                end_date_intraday = now.date()
-                current_prices = fetch_prices_yq(tickers, start_date_intraday, end_date_intraday).iloc[-1]
+                current_prices = fetch_intraday_prices(tickers, interval="30m", lookback_days=2).iloc[-1]
 
-                # Pesos atuais
+                # Pesos atuais (ledger ou fixos)
                 if use_ledger and ledger_ctx is not None:
                     weights_now = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
                 else:
                     weights_now = pd.Series(w_real, index=tickers)
 
-                # Calcula valor normalizado (evolução relativa)
+                # Valor “normalizado” do portfólio (base relativa)
                 base_value = float((current_prices * weights_now).sum())
+
+                # Salva histórico
                 st.session_state["realtime_history"][today_str].append({
                     "timestamp": now,
                     "value": base_value
@@ -1302,13 +1333,13 @@ with tab_realtime:
             except Exception as e:
                 st.error(f"Erro ao atualizar: {e}")
 
-    # ===================== Cria dataframe do histórico =====================
+    # Montagem do gráfico e métricas
     hist_data = st.session_state["realtime_history"][today_str]
     if len(hist_data) > 0:
         hist_df = pd.DataFrame(hist_data)
         hist_df["timestamp"] = pd.to_datetime(hist_df["timestamp"])
 
-        # --- Garante ponto inicial às 07:00 ---
+        # Ponto inicial fixo às 07:00
         from datetime import time
         morning_ref = datetime.combine(datetime.now(tz).date(), time(7, 0), tz)
         if not any(hist_df["timestamp"].dt.time == morning_ref.time()):
@@ -1317,20 +1348,18 @@ with tab_realtime:
                 hist_df
             ], ignore_index=True)
 
-        # --- Mantém apenas pontos a partir das 07:00 ---
+        # Filtra apenas dados do dia após 07:00
         hist_df = hist_df[hist_df["timestamp"].dt.hour >= 7]
 
-        # --- Normaliza valor (1.0 = início do dia)
+        # Normaliza (1.0 = início do dia)
         hist_df["norm_value"] = hist_df["value"] / hist_df["value"].iloc[0]
         hist_df["ret_pct"] = (hist_df["norm_value"] - 1) * 100
 
-        # --- Retorno intradiário
+        # Métrica de retorno intradiário
         intraday_ret = hist_df["ret_pct"].iloc[-1] if not hist_df["ret_pct"].isna().all() else 0.0
-
-        # --- Exibe métricas
         st.metric("📊 Retorno Intraday", f"{intraday_ret:.2f}%")
 
-        # --- Gráfico
+        # Gráfico da evolução intradiária
         fig_intraday = px.line(
             hist_df,
             x="timestamp",
@@ -1338,6 +1367,7 @@ with tab_realtime:
             title="Evolução Intradiária Normalizada do Portfólio (Base = 1 às 07:00)",
             labels={"timestamp": "Horário", "norm_value": "Valor Normalizado"},
         )
+        fig_intraday.add_hline(y=1.0, line_dash="dot", line_color="gray")  # linha base 1.0
         fig_intraday.update_layout(yaxis_tickformat=".3f")
         st.plotly_chart(fig_intraday, use_container_width=True)
 
