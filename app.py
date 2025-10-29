@@ -1255,8 +1255,8 @@ with tab_chat:
         st.warning("Configure GOOGLE_API_KEY para usar o chat Gemini.")
 
 
-# ============= ATUALIZAÇÃO EM TEMPO REAL (30min + botão manual) =============
-with tab_realtime:
+# ============= ATUALIZAÇÃO EM TEMPO REAL =============
+with st.tab("⏱ Atualização em Tempo Real"):
     st.subheader("⏱ Atualização em Tempo Real do Portfólio")
 
     st.markdown("""
@@ -1272,7 +1272,6 @@ with tab_realtime:
     # --- Função que coleta os preços atuais ---
     @st.cache_data(ttl=1800)
     def fetch_live_prices(tickers):
-        """Busca preços atuais via YahooQuery"""
         from yahooquery import Ticker
         data = Ticker(tickers).price
         live_prices = {}
@@ -1290,50 +1289,39 @@ with tab_realtime:
 
     today_str = datetime.now(tz).strftime("%Y-%m-%d")
 
-    # --- Inicializa histórico intradiário no session_state ---
     if "realtime_history" not in st.session_state:
         st.session_state["realtime_history"] = {}
-
     if today_str not in st.session_state["realtime_history"]:
         st.session_state["realtime_history"][today_str] = []
 
-    # --- Busca preços ao vivo ---
     live_data = fetch_live_prices(tickers)
 
     if live_data:
         current_prices = pd.Series(live_data)
 
-        # Determina os pesos atuais do portfólio
         if use_ledger and ledger_ctx is not None:
             weights_now = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
         else:
             weights_now = pd.Series(w_real, index=tickers)
-
         weights_now = weights_now[weights_now.abs() > 1e-6]
 
-        # Calcula o valor instantâneo do portfólio
         port_now_value = (weights_now * current_prices[weights_now.index]).sum() * initial_capital
 
-        # Armazena histórico do dia
         st.session_state["realtime_history"][today_str].append({
             "timestamp": datetime.now(tz),
             "value": port_now_value
         })
 
         hist_df = pd.DataFrame(st.session_state["realtime_history"][today_str])
-
-        # Calcula o retorno intradiário (%)
         if len(hist_df) > 1:
             hist_df["ret_intraday"] = (hist_df["value"] / hist_df["value"].iloc[0] - 1) * 100
         else:
             hist_df["ret_intraday"] = 0.0
 
-        # --- Métricas principais ---
         c1, c2 = st.columns(2)
         c1.metric("💰 Valor Atual do Portfólio", f"${port_now_value:,.0f}")
         c2.metric("📈 Retorno Intraday", f"{hist_df['ret_intraday'].iloc[-1]:.2f}%")
 
-        # --- Gráfico de variação intradiária ---
         if len(hist_df) > 1:
             fig_rt = px.line(
                 hist_df,
