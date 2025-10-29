@@ -79,7 +79,7 @@ TRADES_BOOK = [
     {"date": dt.date(2025, 10, 27), "ticker": "GLD", "qty": 53_000, "price": 371.13}, # início de posição pós-stop
     {"date": dt.date(2025, 10, 27), "ticker": "XLF", "qty": 565_000, "price": 53.37}, # início de posição
     {"date": dt.date(2025, 10, 27), "ticker": "TLT", "qty": -165_000, "price": 95.00}, # stop
-    {"date": dt.date(2025, 10, 28), "ticker": "GLD", "qty": -53_000, "price": 362.42} # fomos stoppados
+    {"date": dt.date(2025, 10, 28), "ticker": "GLD", "qty": -53_000, "price": 361.81} # fomos stoppados
 
 ]
 
@@ -601,8 +601,8 @@ rets_active = rets.loc[:, rets.columns.isin(active_universe)].copy()
 
 
 # ============= Abas =============
-tab_resumo, tab_risk, tab_otimiz, tab_forecast, tab_news, tab_chat = st.tabs(
-    ["📈 Resumo", "⚠️ Riscos", "🧮 Otimização", "🔮 Forecast", "📰 Notícias & IA", "💬 Chat"]
+tab_resumo, tab_risk, tab_otimiz, tab_forecast, tab_news, tab_chat, tab_realtime = st.tabs(
+    ["📈 Resumo", "⚠️ Riscos", "🧮 Otimização", "🔮 Forecast", "📰 Notícias & IA", "💬 Chat", "⏱ Atualização em Tempo Real"]
 )
 
 # ============= RESUMO =============
@@ -1253,3 +1253,102 @@ with tab_chat:
                 st.error(f"Falha ao consultar Gemini: {e}")
     elif prompt and not gemini_model:
         st.warning("Configure GOOGLE_API_KEY para usar o chat Gemini.")
+
+
+# ============= ATUALIZAÇÃO EM TEMPO REAL (30min + botão manual) =============
+with tab_realtime:
+    st.subheader("⏱ Atualização em Tempo Real do Portfólio")
+
+    st.markdown("""
+    Monitora o valor e o retorno intradiário do portfólio em tempo real.
+    Os dados são atualizados automaticamente a cada **30 minutos** ou manualmente pelo botão abaixo.
+    """)
+
+    from datetime import datetime
+    import pytz
+
+    tz = pytz.timezone("America/Sao_Paulo")
+
+    # --- Função que coleta os preços atuais ---
+    @st.cache_data(ttl=1800)
+    def fetch_live_prices(tickers):
+        """Busca preços atuais via YahooQuery"""
+        from yahooquery import Ticker
+        data = Ticker(tickers).price
+        live_prices = {}
+        for t in data:
+            try:
+                live_prices[t] = data[t]["regularMarketPrice"]
+            except Exception:
+                continue
+        return live_prices
+
+    # --- Botão manual de atualização ---
+    if st.button("🔄 Atualizar agora"):
+        st.cache_data.clear()
+        st.success("Preços atualizados manualmente!")
+
+    today_str = datetime.now(tz).strftime("%Y-%m-%d")
+
+    # --- Inicializa histórico intradiário no session_state ---
+    if "realtime_history" not in st.session_state:
+        st.session_state["realtime_history"] = {}
+
+    if today_str not in st.session_state["realtime_history"]:
+        st.session_state["realtime_history"][today_str] = []
+
+    # --- Busca preços ao vivo ---
+    live_data = fetch_live_prices(tickers)
+
+    if live_data:
+        current_prices = pd.Series(live_data)
+
+        # Determina os pesos atuais do portfólio
+        if use_ledger and ledger_ctx is not None:
+            weights_now = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
+        else:
+            weights_now = pd.Series(w_real, index=tickers)
+
+        weights_now = weights_now[weights_now.abs() > 1e-6]
+
+        # Calcula o valor instantâneo do portfólio
+        port_now_value = (weights_now * current_prices[weights_now.index]).sum() * initial_capital
+
+        # Armazena histórico do dia
+        st.session_state["realtime_history"][today_str].append({
+            "timestamp": datetime.now(tz),
+            "value": port_now_value
+        })
+
+        hist_df = pd.DataFrame(st.session_state["realtime_history"][today_str])
+
+        # Calcula o retorno intradiário (%)
+        if len(hist_df) > 1:
+            hist_df["ret_intraday"] = (hist_df["value"] / hist_df["value"].iloc[0] - 1) * 100
+        else:
+            hist_df["ret_intraday"] = 0.0
+
+        # --- Métricas principais ---
+        c1, c2 = st.columns(2)
+        c1.metric("💰 Valor Atual do Portfólio", f"${port_now_value:,.0f}")
+        c2.metric("📈 Retorno Intraday", f"{hist_df['ret_intraday'].iloc[-1]:.2f}%")
+
+        # --- Gráfico de variação intradiária ---
+        if len(hist_df) > 1:
+            fig_rt = px.line(
+                hist_df,
+                x="timestamp",
+                y="ret_intraday",
+                title="Evolução Intradiária do Portfólio (%)",
+                labels={"timestamp": "Horário (BRT)", "ret_intraday": "Retorno (%)"}
+            )
+            fig_rt.update_layout(
+                xaxis_title="Horário",
+                yaxis_title="Retorno (%)",
+                yaxis_tickformat=".2f"
+            )
+            st.plotly_chart(fig_rt, use_container_width=True)
+        else:
+            st.info("O gráfico será preenchido conforme novas cotações forem capturadas.")
+    else:
+        st.warning("Não foi possível obter preços ao vivo no momento.")
