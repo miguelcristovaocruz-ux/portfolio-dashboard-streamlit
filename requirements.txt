@@ -15,3 +15,4 @@ certifi
 beautifulsoup4
 dotenv
 pytz
+tabulate
