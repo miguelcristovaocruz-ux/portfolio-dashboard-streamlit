@@ -14,3 +14,4 @@ feedparser
 certifi
 beautifulsoup4
 dotenv
+pytz
