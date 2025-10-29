@@ -1279,7 +1279,10 @@ with tab_realtime:
     if st.button("🔄 Atualizar agora"):
         with st.spinner("Atualizando preços e recalculando..."):
             try:
-                current_prices = fetch_prices_yq(tickers, now - timedelta(days=2), now).iloc[-1]
+                # Corrige formato das datas (usa apenas a parte de data, sem hora)
+                start_date_intraday = (now - timedelta(days=2)).date()
+                end_date_intraday = now.date()
+                current_prices = fetch_prices_yq(tickers, start_date_intraday, end_date_intraday).iloc[-1]
 
                 # Calcula pesos atuais
                 if use_ledger and ledger_ctx is not None:
@@ -1287,10 +1290,10 @@ with tab_realtime:
                 else:
                     weights_now = pd.Series(w_real, index=tickers)
 
-                # Corrige cálculo do valor (sem multiplicar duas vezes)
+                # Corrige cálculo do valor (sem duplicar capital)
                 port_now_value = (weights_now * current_prices[weights_now.index]).sum()
 
-                # Adiciona o valor e timestamp ao histórico
+                # Adiciona valor e timestamp ao histórico
                 st.session_state["realtime_history"][today_str].append({
                     "timestamp": now,
                     "value": port_now_value
@@ -1319,7 +1322,7 @@ with tab_realtime:
         # --- Mantém apenas pontos a partir das 07:00 ---
         hist_df = hist_df[hist_df["timestamp"].dt.hour >= 7]
 
-        # --- Agrupa por intervalos de 30 minutos e mantém último valor ---
+        # --- Agrupa por intervalos de 30 minutos e mantém o último valor ---
         hist_df["interval"] = hist_df["timestamp"].dt.floor("30min")
         hist_df = hist_df.groupby("interval", as_index=False).last()
 
@@ -1343,4 +1346,3 @@ with tab_realtime:
 
     else:
         st.info("Nenhum dado intradiário disponível ainda. Clique em **'Atualizar agora'** para iniciar a coleta.")
-        
