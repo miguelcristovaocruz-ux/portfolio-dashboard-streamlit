@@ -1256,8 +1256,9 @@ with tab_chat:
 
 
 # ============= ATUALIZAÇÃO EM TEMPO REAL =============
-with st.tab("⏱ Atualização em Tempo Real"):
-    st.subheader("⏱ Atualização em Tempo Real do Portfólio")
+with tab_realtime:
+    st.subheader("⏱ Teste Aba Tempo Real")
+    st.write("Se você vê este texto, a aba está funcionando!")
 
     st.markdown("""
     Monitora o valor e o retorno intradiário do portfólio em tempo real.
