@@ -1255,91 +1255,64 @@ with tab_chat:
         st.warning("Configure GOOGLE_API_KEY para usar o chat Gemini.")
 
 
-# ============= ATUALIZAÇÃO EM TEMPO REAL =============
-tab_realtime = st.tabs(["📊 Atualização em Tempo Real"])[0]
-
 with tab_realtime:
-    st.subheader("📈 Evolução Intradiária do Portfólio (atualização manual)")
+    st.subheader("📊 Atualização em Tempo Real (intradiário 15m desde 05:00)")
 
-    # --- Botão de atualização manual
+    # Botão manual – replica o comportamento do seu Colab
     if st.button("🔄 Atualizar agora"):
         try:
-            # ✅ Determina ativos e pesos atuais do ledger
-            if use_ledger and ledger_ctx is not None:
-                last_w = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
-                active_tickers = [t for t in last_w.index if abs(last_w[t]) > 1e-6]
-                weights = last_w[active_tickers]
+            # 1) Tickers e pesos do PORTFÓLIO ATUAL
+            if use_ledger and (ledger_ctx is not None):
+                last_w_all = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
+                # remove zeros e CASH se existir
+                last_w = last_w_all[(last_w_all.abs() > 1e-6) & (last_w_all.index != "CASH")]
+                active_tickers = list(last_w.index)
+                weights_now = last_w.copy()
             else:
-                active_tickers = tickers
-                weights = pd.Series(w_real, index=active_tickers)
+                # fallback: pesos fixos
+                active_tickers = [t for t in tickers if t != "CASH"]
+                weights_now = pd.Series(w_real, index=active_tickers)
 
-            # --- Baixa preços intradiários (15m) das últimas 2 sessões
-            data_intraday = {}
-            for tk in active_tickers:
-                try:
-                    tk_obj = Ticker(tk)
-                    df = tk_obj.history(interval="15m", range="2d")
-                    if df.empty or "close" not in df.columns:
-                        continue
-                    df = df.reset_index().set_index("datetime")[["close"]]
-                    df.columns = [tk]
-                    data_intraday[tk] = df
-                except Exception:
-                    continue
-
-            if not data_intraday:
-                st.warning("Nenhum dado intradiário disponível para os ativos atuais.")
+            if len(active_tickers) == 0:
+                st.warning("Não há ativos com peso > 0 para monitorar.")
                 st.stop()
 
-            # --- Junta todos os ativos
-            prices = pd.concat(data_intraday.values(), axis=1).ffill()
+            # 2) Cálculo intradiário exatamente como no Colab
+            returns_df, port_ret = compute_intraday_portfolio_change_15m_since_5am(active_tickers, weights_now)
 
-            # --- Filtra apenas dados do dia atual
-            today = pd.Timestamp.now().normalize()
-            prices_today = prices.loc[prices.index >= today]
-
-            # --- Filtra de 05:00 até o momento atual
-            prices_today = prices_today.between_time("05:00", "23:00")
-
-            if prices_today.empty:
-                st.warning("Sem dados intradiários para o dia atual (verifique o horário de mercado).")
+            if returns_df.empty or port_ret.empty:
+                st.warning("Sem dados intradiários (15m) disponíveis para hoje nos ativos atuais.")
                 st.stop()
 
-            # --- Calcula variação percentual por ativo desde 05:00
-            base_prices = prices_today.iloc[0]
-            returns = (prices_today - base_prices) / base_prices
-
-            # --- Cálculo da variação ponderada do portfólio
-            returns = returns[weights.index.intersection(returns.columns)]
-            port_ret = (returns * weights).sum(axis=1) * 100  # em %
-
-            # --- Gráfico
+            # 3) Gráfico (em %) e métricas – visual alinhado com o app
             fig_intraday = go.Figure()
             fig_intraday.add_trace(go.Scatter(
-                x=port_ret.index, y=port_ret.values,
-                mode="lines+markers",
-                name="Variação Intradiária (%)",
-                line=dict(width=2)
+                x=port_ret.index,
+                y=port_ret.values,
+                mode="lines",
+                name="Portfólio (desde 05:00)",
+                line=dict(width=3)
             ))
+            fig_intraday.add_hline(y=0.0, line_dash="dot", line_color="gray")
             fig_intraday.update_layout(
                 title="Variação Percentual Intradiária do Portfólio",
                 xaxis_title="Horário",
                 yaxis_title="Retorno (%) desde 05:00",
                 template="plotly_white"
             )
-
             st.plotly_chart(fig_intraday, use_container_width=True)
 
-            # --- Métricas principais
-            atual = port_ret.iloc[-1]
-            min_ret, max_ret = port_ret.min(), port_ret.max()
-            st.metric("Retorno Atual (%)", f"{atual:.2f}%")
-            st.metric("Máximo Intradiário (%)", f"{max_ret:.2f}%")
-            st.metric("Mínimo Intradiário (%)", f"{min_ret:.2f}%")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Retorno atual", f"{port_ret.iloc[-1]:.2f}%")
+            c2.metric("Máximo intradiário", f"{port_ret.max():.2f}%")
+            c3.metric("Mínimo intradiário", f"{port_ret.min():.2f}%")
+
+            # (opcional) Mostrar retornos por ativo (no mesmo conceito de base 05:00)
+            with st.expander("Ver retornos intradiários por ativo (%)"):
+                st.dataframe((returns_df.iloc[-1] * 100).sort_values(ascending=False).round(2).to_frame("Ret % (desde 05:00)"))
 
         except Exception as e:
             st.error(f"Erro ao atualizar: {e}")
-
     else:
-        st.info("Clique em '🔄 Atualizar agora' para carregar a variação intradiária do portfólio.")
+        st.info("Clique em **'Atualizar agora'** para calcular a variação intradiária (15m) desde 05:00 com os pesos atuais do portfólio.")
         
