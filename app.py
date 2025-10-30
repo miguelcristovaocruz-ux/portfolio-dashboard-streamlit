@@ -599,7 +599,63 @@ else:
 
 rets_active = rets.loc[:, rets.columns.isin(active_universe)].copy()
 
+# --- Utilitário: variação intradiária (15m) desde 05:00, por ativo e portfólio
+def compute_intraday_portfolio_change_15m_since_5am(active_tickers: list[str], weights: pd.Series) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    Replica a lógica do Colab:
+      - baixa preços intradiários (interval='15m', range='2d') por ATIVO
+      - mantém apenas coluna 'close'
+      - filtra o DIA ATUAL entre 05:00 e 23:59
+      - normaliza cada ativo na cotação de 05:00 (retorno relativo)
+      - agrega o retorno ponderado pelo peso (soma w_i * r_i,t)
+    Retorna:
+      (returns_df [% por ativo], port_ret [% do portfólio])
+    """
+    from yahooquery import Ticker
 
+    data_intraday = {}
+    for tk in active_tickers:
+        try:
+            tk_obj = Ticker(tk)
+            df = tk_obj.history(interval="15m", range="2d")
+            if isinstance(df, pd.DataFrame) and not df.empty and ("close" in df.columns):
+                df = df.reset_index().set_index("date")[["close"]]
+                df.columns = [tk]
+                data_intraday[tk] = df
+        except Exception:
+            continue
+
+    if not data_intraday:
+        return pd.DataFrame(), pd.Series(dtype=float)
+
+    prices = pd.concat(data_intraday.values(), axis=1).ffill()
+
+    today = pd.Timestamp.now().normalize()
+    prices_today = prices.loc[prices.index >= today]
+    if prices_today.empty:
+        return pd.DataFrame(), pd.Series(dtype=float)
+
+    try:
+        prices_today = prices_today.between_time("05:00", "23:59")
+    except Exception:
+        prices_today.index = pd.to_datetime(prices_today.index)
+        prices_today = prices_today.between_time("05:00", "23:59")
+
+    if prices_today.empty:
+        return pd.DataFrame(), pd.Series(dtype=float)
+
+    cols_ok = [c for c in prices_today.columns if c in weights.index]
+    if not cols_ok:
+        return pd.DataFrame(), pd.Series(dtype=float)
+
+    prices_today = prices_today[cols_ok]
+    w = weights.reindex(cols_ok).fillna(0.0)
+
+    base = prices_today.iloc[0]
+    returns_df = (prices_today - base) / base
+    port_ret = (returns_df * w).sum(axis=1) * 100.0
+
+    return returns_df, port_ret
 # ============= Abas =============
 tab_resumo, tab_risk, tab_otimiz, tab_forecast, tab_news, tab_chat, tab_realtime = st.tabs(
     ["📈 Resumo", "⚠️ Riscos", "🧮 Otimização", "🔮 Forecast", "📰 Notícias & IA", "💬 Chat", "⏱ Atualização em Tempo Real"]
@@ -1315,4 +1371,3 @@ with tab_realtime:
             st.error(f"Erro ao atualizar: {e}")
     else:
         st.info("Clique em **'Atualizar agora'** para calcular a variação intradiária (15m) desde 05:00 com os pesos atuais do portfólio.")
-        
