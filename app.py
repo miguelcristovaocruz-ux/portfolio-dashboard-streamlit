@@ -1011,3 +1011,125 @@ with tab_forecast:
     fig_hist = px.histogram(final_vals, nbins=50, title="Distribuição do Valor Final")
     st.plotly_chart(fig_hist, use_container_width=True)
 
+# ============= ATUALIZAÇÃO EM TEMPO REAL =============
+with st.tabs(["⏱️ Atualização em Tempo Real"])[0]:
+    st.subheader("📊 Evolução Intraday do Portfólio")
+
+    # --- Botão para atualizar ---
+    if st.button("🔄 Atualizar agora"):
+        try:
+            # ===== BOOK DE TRADES =====
+            fuso = pytz.timezone("America/Sao_Paulo")
+            date_cutoff = (datetime.now(fuso) - timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=0)
+
+            df = pd.DataFrame(TRADES_BOOK).sort_values("date")
+            df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(fuso)
+            df = df[df["date"] <= date_cutoff]
+
+            cash = 100_000_000
+            pos = {}
+            last_date = df["date"].min() if not df.empty else date_cutoff
+
+            for _, row in df.iterrows():
+                dias = (row["date"] - last_date).days
+                if dias > 0 and cash != 0:
+                    cash *= (1 + 0.04 / 365) ** dias
+
+                tkr, qty, price = row["ticker"], row["qty"], row["price"]
+                pos[tkr] = pos.get(tkr, 0) + qty
+                cash -= qty * price
+                last_date = row["date"]
+
+            dias_final = (date_cutoff - last_date).days
+            if dias_final > 0 and cash != 0:
+                cash *= (1 + 0.04 / 365) ** dias_final
+
+            pos = {k: v for k, v in pos.items() if abs(v) > 0}
+            tickers = list(pos.keys())
+
+            # --- Preços mais recentes ---
+            data_yf = yf.download(
+                tickers=tickers,
+                start=date_cutoff - timedelta(days=6),
+                end=date_cutoff + timedelta(days=1),
+                interval="1d",
+                auto_adjust=True,
+                group_by="ticker",
+                progress=False
+            )
+
+            precos = {}
+            for t in tickers:
+                try:
+                    serie = (
+                        data_yf[t]["Close"].dropna()
+                        if isinstance(data_yf.columns, pd.MultiIndex)
+                        else data_yf["Close"].dropna()
+                    )
+                    serie.index = serie.index.tz_localize("UTC").tz_convert(fuso)
+                    serie = serie[serie.index <= date_cutoff]
+                    precos[t] = float(serie.iloc[-1]) if not serie.empty else np.nan
+                except:
+                    precos[t] = np.nan
+
+            valores = {t: pos[t] * precos[t] for t in tickers}
+            total_ativos = sum(v for v in valores.values() if not np.isnan(v))
+            total_portfolio = total_ativos + cash
+            pesos = {t: valores[t] / total_portfolio for t in tickers}
+            peso_cash = cash / total_portfolio
+
+            # --- Baixa preços intraday ---
+            fuso = pytz.timezone("America/Sao_Paulo")
+            agora = datetime.now(fuso)
+            inicio_dia = agora.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            dfs = []
+            for ativo in tickers:
+                df_ativo = yf.download(
+                    ativo, start=inicio_dia, end=agora, interval="15m", prepost=True, progress=False
+                )[["Close"]]
+                df_ativo.columns = [ativo]
+                df_ativo.index = df_ativo.index.tz_convert(fuso)
+                dfs.append(df_ativo)
+
+            data = pd.concat(dfs, axis=1, join="outer").sort_index().ffill()
+
+            # --- Base de 5am ---
+            base_time = data.index.normalize()[0].replace(hour=5, minute=0, second=0, microsecond=0)
+            base = data.loc[base_time] if base_time in data.index else data.iloc[0]
+
+            w = pd.Series(pesos)
+            data = data.astype(float)
+            retornos = (data - data.iloc[0]) / data.iloc[0]
+            port = (retornos * w).sum(axis=1)
+            port.name = "Portfólio"
+
+            # --- Gráfico ---
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=port.index,
+                    y=port,
+                    mode="lines+markers",
+                    name="Portfólio",
+                    line=dict(width=2, color="royalblue"),
+                    hovertemplate="<b>%{x}</b><br>Variação: %{y:.2%}<extra></extra>",
+                )
+            )
+            fig.update_layout(
+                title="📈 Evolução Intraday do Portfólio",
+                xaxis_title="Horário (Brasília)",
+                yaxis_title="Variação acumulada (%)",
+                xaxis=dict(showgrid=True, gridcolor="lightgray"),
+                yaxis=dict(showgrid=True, gridcolor="lightgray"),
+                template="plotly_white",
+                hovermode="x unified",
+                font=dict(size=12),
+                height=500,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Erro ao atualizar: {e}")
+    else:
+        st.info("Clique em **🔄 Atualizar agora** para gerar o gráfico intraday.")
