@@ -8,10 +8,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from scipy.optimize import minimize
 from yahooquery import Ticker
-import google.generativeai as genai
 from datetime import datetime, timedelta, time
 from openpyxl import Workbook
-import feedparser
 import requests
 from bs4 import BeautifulSoup
 
@@ -598,72 +596,10 @@ else:
 
 rets_active = rets.loc[:, rets.columns.isin(active_universe)].copy()
 
-# --- Função para calcular a variação intradiária (15m desde 05:00) com pesos do ledger
-from datetime import datetime, timedelta
-import pytz
-from yahooquery import Ticker
-
-def intraday_port_ret_15m_today_since_5am_from_ledger(ledger_ctx, rets, use_ledger=True):
-    """Calcula o retorno intradiário do portfólio (pesos do ledger) desde 05:00"""
-    if not (use_ledger and ledger_ctx is not None):
-        return pd.Series(dtype=float), pd.DataFrame()  # se não houver ledger, retorna vazio
-
-    # ---- pesos atuais (última linha), remove zeros e CASH
-    last_w = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
-    last_w = last_w[(last_w.abs() > 1e-6) & (last_w.index != "CASH")].copy()
-
-    tickers_list = list(last_w.index)
-    if len(tickers_list) == 0:
-        return pd.Series(dtype=float), pd.DataFrame()
-
-    # ---- janela: hoje, das 05:00 até agora (horário NY)
-    tz = pytz.timezone("America/New_York")
-    now = datetime.now(tz)
-    start_dt = tz.localize(datetime(now.year, now.month, now.day, 5, 0, 0))
-    end_dt = now
-
-    # ---- baixa preços intradiários por ativo
-    frames = []
-    for tk in tickers_list:
-        try:
-            t = Ticker(tk)
-            df = t.history(start=start_dt, end=end_dt, interval="15m")
-            if isinstance(df, pd.DataFrame) and not df.empty and "close" in df.columns:
-                df = df.reset_index().set_index("date")[["close"]].rename(columns={"close": tk})
-                frames.append(df[tk])
-        except Exception:
-            continue
-
-    if not frames:
-        return pd.Series(dtype=float), pd.DataFrame()
-
-    prices = pd.concat(frames, axis=1).sort_index().ffill()
-
-    try:
-        prices = prices.between_time("05:00", "23:59")
-    except Exception:
-        prices.index = pd.to_datetime(prices.index)
-        prices = prices.between_time("05:00", "23:59")
-
-    if prices.empty:
-        return pd.Series(dtype=float), pd.DataFrame()
-
-    # garante alinhamento com os pesos
-    cols_ok = [c for c in prices.columns if c in last_w.index]
-    prices = prices[cols_ok]
-    w = last_w.reindex(cols_ok).fillna(0.0)
-
-    # normaliza pelo preço das 05:00
-    base = prices.iloc[0]
-    returns_df = (prices - base) / base  # fração
-    port_ret = (returns_df * w).sum(axis=1) * 100.0  # em %
-
-    return port_ret, (returns_df * 100.0)
-
 
 # ============= Abas =============
-tab_resumo, tab_risk, tab_otimiz, tab_forecast, tab_news, tab_chat, tab_realtime = st.tabs(
-    ["📈 Resumo", "⚠️ Riscos", "🧮 Otimização", "🔮 Forecast", "📰 Notícias & IA", "💬 Chat", "⏱ Atualização em Tempo Real"]
+tab_resumo, tab_risk, tab_otimiz, tab_forecast, tab_realtime = st.tabs(
+    ["📈 Resumo", "⚠️ Riscos", "🧮 Otimização", "🔮 Forecast", "⏱ Atualização em Tempo Real"]
 )
 
 # ============= RESUMO =============
@@ -1237,131 +1173,3 @@ with tab_forecast:
     fig_hist = px.histogram(final_vals, nbins=50, title="Distribuição do Valor Final")
     st.plotly_chart(fig_hist, use_container_width=True)
 
-# ============= CHAT (contexto completo, mas oculto na UI) =============
-with tab_chat:
-    st.subheader("Converse com a IA (Gemini) sobre o portfólio e o mercado")
-
-    # tabelas de estatísticas
-    cov_table   = rets.cov().round(4).to_markdown()
-    stats_table = (pd.DataFrame({
-        "Retorno (%)": (rets.mean() * TRADING_DAYS * 100).round(2),
-        "Volatilidade (%)": (rets.std() * np.sqrt(TRADING_DAYS) * 100).round(2)
-    })).to_markdown()
-
-    if not use_ledger:
-        sharpe_info = (
-            f"Sharpe (pesos fixos) = {(portfolio_stats(rets, w_real, rf_annual)[2]):.2f}, "
-            f"Pesos={dict(zip(tickers, (np.array(w_real)*100).round(2)))}"
-        )
-    else:
-        mu_a = port_daily.mean() * TRADING_DAYS
-        vol_a = port_daily.std() * np.sqrt(TRADING_DAYS)
-        sharpe_val = (mu_a - rf_annual) / vol_a if vol_a > 0 else np.nan
-        last_w = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
-        sharpe_info = (
-            f"Sharpe (ledger) = {sharpe_val:.2f}, "
-            f"Pesos atuais = {dict(zip(last_w.index, (last_w.values*100).round(2)))}"
-        )
-
-    # métricas adicionais
-    dd_series_r, dd_min = drawdown_curve(curva_port)
-    ctx_metrics = {
-        "Valor final": float((ledger_ctx["port_value"].iloc[-1]) if (use_ledger and ledger_ctx is not None) else (curva_port.iloc[-1]*initial_capital)),
-        "TWR total": float((ledger_ctx["port_value"].iloc[-1]/ledger_ctx["port_value"].iloc[0]-1) if use_ledger else (curva_port.iloc[-1]-1)),
-        "Vol (anual)": float(port_daily.std()*np.sqrt(TRADING_DAYS)),
-        "Max DD": float(dd_min)
-    }
-    ctx_metrics_str = "\n".join([f"- {k}: {v}" for k, v in ctx_metrics.items()])
-
-    # >>> Retornos diários e semanais para contexto
-    daily_port   = port_daily
-    weekly_assets = (1 + rets).resample("W").prod() - 1
-    daily_table_chat  = daily_port.round(4).to_frame("Retorno Diário").to_markdown()
-    weekly_table_chat = weekly_assets.round(4).to_markdown()
-
-    # contexto consolidado para o Gemini
-    ctx = (
-        f"Período analisado: {start_date} → {end_date}\n"
-        f"Taxa livre de risco: {rf_annual:.2%}\n\n"
-        f"Estatísticas dos ativos:\n{stats_table}\n\n"
-        f"Matriz de Covariância anual:\n{cov_table}\n\n"
-        f"{sharpe_info}\n\n"
-        f"Métricas adicionais:\n{ctx_metrics_str}\n\n"
-        f"Retorno diário consolidado do portfólio:\n{daily_table_chat}\n\n"
-        f"Retorno semanal por ativo:\n{weekly_table_chat}\n"
-    )
-
-    st.caption("O chat usa todas as métricas e tabelas da aplicação como contexto (não exibidas).")
-
-    # inicia sessão de chat
-    if "chat" not in st.session_state and gemini_model:
-        st.session_state.chat = gemini_model.start_chat(history=[])
-
-    prompt = st.chat_input("Digite sua pergunta")
-    if prompt and gemini_model:
-        with st.chat_message("user"):
-            st.write(prompt)
-        with st.chat_message("assistant"):
-            try:
-                resp = st.session_state.chat.send_message(
-                    SYSTEM_INSTRUCTIONS
-                    + f"Use o seguinte contexto para responder matematicamente, com fórmulas quando fizer sentido:\n"
-                    + ctx
-                    + f"\n\nPergunta: {prompt}"
-                )
-                st.write(resp.text)
-            except Exception as e:
-                st.error(f"Falha ao consultar Gemini: {e}")
-    elif prompt and not gemini_model:
-        st.warning("Configure GOOGLE_API_KEY para usar o chat Gemini.")
-
-# ============= ATUALIZAÇÃO EM TEMPO REAL =============
-tab_realtime = st.tabs(["📊 Atualização em Tempo Real"])[0]
-
-with tab_realtime:
-    st.subheader("📊 Atualização em Tempo Real (Intradiário desde 05:00)")
-
-    if st.button("🔄 Atualizar agora"):
-        try:
-            port_ret, returns_by_asset = intraday_port_ret_15m_today_since_5am_from_ledger(
-                ledger_ctx, rets, use_ledger=True
-            )
-
-            if port_ret.empty:
-                st.warning("Sem dados intradiários disponíveis para o portfólio atual.")
-                st.stop()
-
-            # --- Gráfico
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=port_ret.index,
-                y=port_ret.values,
-                mode="lines",
-                name="Portfólio",
-                line=dict(width=3)
-            ))
-            fig.add_hline(y=0, line_dash="dot", line_color="gray")
-            fig.update_layout(
-                title="Retorno Intradiário do Portfólio (desde 05:00, intervalos de 15m)",
-                xaxis_title="Horário",
-                yaxis_title="Retorno (%)",
-                template="plotly_white"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Retorno Atual (%)", f"{port_ret.iloc[-1]:.2f}%")
-            c2.metric("Máximo Intradiário (%)", f"{port_ret.max():.2f}%")
-            c3.metric("Mínimo Intradiário (%)", f"{port_ret.min():.2f}%")
-
-            with st.expander("Ver retornos por ativo"):
-                st.dataframe(
-                    returns_by_asset.iloc[-1].sort_values(ascending=False).round(2).to_frame("Retorno (%)")
-                )
-
-        except Exception as e:
-            st.error(f"Erro ao atualizar: {e}")
-
-    else:
-        st.info("Clique em '🔄 Atualizar agora' para calcular o retorno intradiário do portfólio (15m desde 05:00).")
-        
