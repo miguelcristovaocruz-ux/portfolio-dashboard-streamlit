@@ -9,12 +9,11 @@ import streamlit as st
 from scipy.optimize import minimize
 from yahooquery import Ticker
 import google.generativeai as genai
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from openpyxl import Workbook
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
 
 # ============= Config e Env =============
 st.set_page_config(
@@ -599,63 +598,69 @@ else:
 
 rets_active = rets.loc[:, rets.columns.isin(active_universe)].copy()
 
-# --- Utilitário: variação intradiária (15m) desde 05:00, por ativo e portfólio
-def compute_intraday_portfolio_change_15m_since_5am(active_tickers: list[str], weights: pd.Series) -> tuple[pd.DataFrame, pd.Series]:
-    """
-    Replica a lógica do Colab:
-      - baixa preços intradiários (interval='15m', range='2d') por ATIVO
-      - mantém apenas coluna 'close'
-      - filtra o DIA ATUAL entre 05:00 e 23:59
-      - normaliza cada ativo na cotação de 05:00 (retorno relativo)
-      - agrega o retorno ponderado pelo peso (soma w_i * r_i,t)
-    Retorna:
-      (returns_df [% por ativo], port_ret [% do portfólio])
-    """
-    from yahooquery import Ticker
+# --- Função para calcular a variação intradiária (15m desde 05:00) com pesos do ledger
+from datetime import datetime, timedelta
+import pytz
+from yahooquery import Ticker
 
-    data_intraday = {}
-    for tk in active_tickers:
+def intraday_port_ret_15m_today_since_5am_from_ledger(ledger_ctx, rets, use_ledger=True):
+    """Calcula o retorno intradiário do portfólio (pesos do ledger) desde 05:00"""
+    if not (use_ledger and ledger_ctx is not None):
+        return pd.Series(dtype=float), pd.DataFrame()  # se não houver ledger, retorna vazio
+
+    # ---- pesos atuais (última linha), remove zeros e CASH
+    last_w = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
+    last_w = last_w[(last_w.abs() > 1e-6) & (last_w.index != "CASH")].copy()
+
+    tickers_list = list(last_w.index)
+    if len(tickers_list) == 0:
+        return pd.Series(dtype=float), pd.DataFrame()
+
+    # ---- janela: hoje, das 05:00 até agora (horário NY)
+    tz = pytz.timezone("America/New_York")
+    now = datetime.now(tz)
+    start_dt = tz.localize(datetime(now.year, now.month, now.day, 5, 0, 0))
+    end_dt = now
+
+    # ---- baixa preços intradiários por ativo
+    frames = []
+    for tk in tickers_list:
         try:
-            tk_obj = Ticker(tk)
-            df = tk_obj.history(interval="15m", range="2d")
-            if isinstance(df, pd.DataFrame) and not df.empty and ("close" in df.columns):
-                df = df.reset_index().set_index("date")[["close"]]
-                df.columns = [tk]
-                data_intraday[tk] = df
+            t = Ticker(tk)
+            df = t.history(start=start_dt, end=end_dt, interval="15m")
+            if isinstance(df, pd.DataFrame) and not df.empty and "close" in df.columns:
+                df = df.reset_index().set_index("date")[["close"]].rename(columns={"close": tk})
+                frames.append(df[tk])
         except Exception:
             continue
 
-    if not data_intraday:
-        return pd.DataFrame(), pd.Series(dtype=float)
+    if not frames:
+        return pd.Series(dtype=float), pd.DataFrame()
 
-    prices = pd.concat(data_intraday.values(), axis=1).ffill()
-
-    today = pd.Timestamp.now().normalize()
-    prices_today = prices.loc[prices.index >= today]
-    if prices_today.empty:
-        return pd.DataFrame(), pd.Series(dtype=float)
+    prices = pd.concat(frames, axis=1).sort_index().ffill()
 
     try:
-        prices_today = prices_today.between_time("05:00", "23:59")
+        prices = prices.between_time("05:00", "23:59")
     except Exception:
-        prices_today.index = pd.to_datetime(prices_today.index)
-        prices_today = prices_today.between_time("05:00", "23:59")
+        prices.index = pd.to_datetime(prices.index)
+        prices = prices.between_time("05:00", "23:59")
 
-    if prices_today.empty:
-        return pd.DataFrame(), pd.Series(dtype=float)
+    if prices.empty:
+        return pd.Series(dtype=float), pd.DataFrame()
 
-    cols_ok = [c for c in prices_today.columns if c in weights.index]
-    if not cols_ok:
-        return pd.DataFrame(), pd.Series(dtype=float)
+    # garante alinhamento com os pesos
+    cols_ok = [c for c in prices.columns if c in last_w.index]
+    prices = prices[cols_ok]
+    w = last_w.reindex(cols_ok).fillna(0.0)
 
-    prices_today = prices_today[cols_ok]
-    w = weights.reindex(cols_ok).fillna(0.0)
+    # normaliza pelo preço das 05:00
+    base = prices.iloc[0]
+    returns_df = (prices - base) / base  # fração
+    port_ret = (returns_df * w).sum(axis=1) * 100.0  # em %
 
-    base = prices_today.iloc[0]
-    returns_df = (prices_today - base) / base
-    port_ret = (returns_df * w).sum(axis=1) * 100.0
+    return port_ret, (returns_df * 100.0)
 
-    return returns_df, port_ret
+
 # ============= Abas =============
 tab_resumo, tab_risk, tab_otimiz, tab_forecast, tab_news, tab_chat, tab_realtime = st.tabs(
     ["📈 Resumo", "⚠️ Riscos", "🧮 Otimização", "🔮 Forecast", "📰 Notícias & IA", "💬 Chat", "⏱ Atualização em Tempo Real"]
@@ -1310,64 +1315,53 @@ with tab_chat:
     elif prompt and not gemini_model:
         st.warning("Configure GOOGLE_API_KEY para usar o chat Gemini.")
 
+# ============= ATUALIZAÇÃO EM TEMPO REAL =============
+tab_realtime = st.tabs(["📊 Atualização em Tempo Real"])[0]
 
 with tab_realtime:
-    st.subheader("📊 Atualização em Tempo Real (intradiário 15m desde 05:00)")
+    st.subheader("📊 Atualização em Tempo Real (Intradiário desde 05:00)")
 
-    # Botão manual – replica o comportamento do seu Colab
     if st.button("🔄 Atualizar agora"):
         try:
-            # 1) Tickers e pesos do PORTFÓLIO ATUAL
-            if use_ledger and (ledger_ctx is not None):
-                last_w_all = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
-                # remove zeros e CASH se existir
-                last_w = last_w_all[(last_w_all.abs() > 1e-6) & (last_w_all.index != "CASH")]
-                active_tickers = list(last_w.index)
-                weights_now = last_w.copy()
-            else:
-                # fallback: pesos fixos
-                active_tickers = [t for t in tickers if t != "CASH"]
-                weights_now = pd.Series(w_real, index=active_tickers)
+            port_ret, returns_by_asset = intraday_port_ret_15m_today_since_5am_from_ledger(
+                ledger_ctx, rets, use_ledger=True
+            )
 
-            if len(active_tickers) == 0:
-                st.warning("Não há ativos com peso > 0 para monitorar.")
+            if port_ret.empty:
+                st.warning("Sem dados intradiários disponíveis para o portfólio atual.")
                 st.stop()
 
-            # 2) Cálculo intradiário exatamente como no Colab
-            returns_df, port_ret = compute_intraday_portfolio_change_15m_since_5am(active_tickers, weights_now)
-
-            if returns_df.empty or port_ret.empty:
-                st.warning("Sem dados intradiários (15m) disponíveis para hoje nos ativos atuais.")
-                st.stop()
-
-            # 3) Gráfico (em %) e métricas – visual alinhado com o app
-            fig_intraday = go.Figure()
-            fig_intraday.add_trace(go.Scatter(
+            # --- Gráfico
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
                 x=port_ret.index,
                 y=port_ret.values,
                 mode="lines",
-                name="Portfólio (desde 05:00)",
+                name="Portfólio",
                 line=dict(width=3)
             ))
-            fig_intraday.add_hline(y=0.0, line_dash="dot", line_color="gray")
-            fig_intraday.update_layout(
-                title="Variação Percentual Intradiária do Portfólio",
+            fig.add_hline(y=0, line_dash="dot", line_color="gray")
+            fig.update_layout(
+                title="Retorno Intradiário do Portfólio (desde 05:00, intervalos de 15m)",
                 xaxis_title="Horário",
-                yaxis_title="Retorno (%) desde 05:00",
+                yaxis_title="Retorno (%)",
                 template="plotly_white"
             )
-            st.plotly_chart(fig_intraday, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("Retorno atual", f"{port_ret.iloc[-1]:.2f}%")
-            c2.metric("Máximo intradiário", f"{port_ret.max():.2f}%")
-            c3.metric("Mínimo intradiário", f"{port_ret.min():.2f}%")
+            c1.metric("Retorno Atual (%)", f"{port_ret.iloc[-1]:.2f}%")
+            c2.metric("Máximo Intradiário (%)", f"{port_ret.max():.2f}%")
+            c3.metric("Mínimo Intradiário (%)", f"{port_ret.min():.2f}%")
 
-            # (opcional) Mostrar retornos por ativo (no mesmo conceito de base 05:00)
-            with st.expander("Ver retornos intradiários por ativo (%)"):
-                st.dataframe((returns_df.iloc[-1] * 100).sort_values(ascending=False).round(2).to_frame("Ret % (desde 05:00)"))
+            with st.expander("Ver retornos por ativo"):
+                st.dataframe(
+                    returns_by_asset.iloc[-1].sort_values(ascending=False).round(2).to_frame("Retorno (%)")
+                )
 
         except Exception as e:
             st.error(f"Erro ao atualizar: {e}")
+
     else:
-        st.info("Clique em **'Atualizar agora'** para calcular a variação intradiária (15m) desde 05:00 com os pesos atuais do portfólio.")
+        st.info("Clique em '🔄 Atualizar agora' para calcular o retorno intradiário do portfólio (15m desde 05:00).")
+        
