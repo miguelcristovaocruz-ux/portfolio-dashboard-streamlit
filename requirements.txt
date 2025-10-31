@@ -5,12 +5,10 @@ numpy
 plotly
 scipy
 kaleido
-google-generativeai
 requests
 scipy
 yfinance
 openpyxl
-feedparser
 certifi
 beautifulsoup4
 dotenv
