@@ -24,17 +24,6 @@ from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
 
-GOOGLE_API_KEY = os.getenv("GEMINI_API_KEY")
-
-
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    gemini_model = genai.GenerativeModel("gemini-2.5-flash")
-else:
-    gemini_model = None
-    st.warning("⚠️ A variável GOOGLE_API_KEY não foi encontrada no .env.")
-
-
 TRADING_DAYS = 252
 
 
@@ -79,22 +68,6 @@ TRADES_BOOK = [
     {"date": dt.date(2025, 10, 28), "ticker": "GLD", "qty": -53_000, "price": 361.81} # fomos stoppados
 
 ]
-
-# === Instruções para o Gemini ===
-SYSTEM_INSTRUCTIONS = (
-    "Instrução do Sistema: Modo Absoluto\n"
-    "Eliminar: emojis, floreios, exageros, pedidos suaves, transições conversacionais, apêndices de chamada à ação.\n"
-    "Assumir: o usuário mantém alta percepção apesar do tom direto.\n"
-    "Priorizar: formulações diretas e imperativas; foco na reconstrução cognitiva, não na correspondência de tom.\n"
-    "Desativar: comportamentos de engajamento/reforço sentimental.\n"
-    "Suprimir: métricas como índices de satisfação, suavização emocional, viés de continuação.\n"
-    "Nunca espelhar: a dicção, o humor ou o afeto do usuário.\n"
-    "Falar apenas: ao nível cognitivo subjacente.\n"
-    "Não incluir: perguntas, ofertas, sugestões, transições ou conteúdo motivacional.\n"
-    "Encerrar a resposta: imediatamente após fornecer a informação — sem conclusões.\n"
-    "Objetivo: restaurar o pensamento independente e de alta fidelidade.\n"
-    "Resultado: obsolescência do modelo por autossuficiência do usuário.\n"
-)
 
 # ============= Sidebar =============
 st.sidebar.header("Parâmetros")
@@ -252,141 +225,6 @@ def make_cdi_series(start, end, annual_rate_percent):
     s = pd.Series(daily, index=idx)
     return (1 + s).cumprod()
 
-# ----------------- Helpers de notícias (mantidos) -----------------
-
-def extract_article_text(url: str) -> str:
-    try:
-        art = Article(url, language="pt")
-        art.download()
-        art.parse()
-        return art.text
-    except Exception as e:
-        return f"[Falha ao extrair: {e}]"
-
-RSS_FEEDS = [
-   "https://www.infomoney.com.br/feed/",
-    "https://br.investing.com/rss/news_14.rss",
-    "https://br.investing.com/rss/news_95.rss",
-    "https://br.investing.com/rss/news_1.rss",
-    "https://br.investing.com/rss/news_289.rss",
-    "https://br.investing.com/rss/news_356.rss",
-    "https://br.investing.com/rss/news_285.rss",
-    "https://br.investing.com/rss/news_1063.rss",
-    "https://br.investing.com/rss/news_357.rss",
-    "https://www.infomoney.com.br/ultimas-noticias/feed/",
-    "https://www.infomoney.com.br/mercados/feed/",
-    "https://www.infomoney.com.br/politica/feed/",
-    "https://www.infomoney.com.br/onde-investir/feed/",
-    "https://www.infomoney.com.br/economia/feed/",
-    "https://www.infomoney.com.br/tudo-sobre/trader/feed/",
-    "https://www.infomoney.com.br/brasil/feed/",
-    "https://www.infomoney.com.br/business/feed/",
-    "https://www.cnnbrasil.com.br/feed/",
-    "https://www.moneytimes.com.br/rss/"
-
-]
-
-@st.cache_data(ttl=600)
-def fetch_and_summarize_news(topk: int = 6):
-    artigos = []
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
-        for entry in feed.entries[:topk]:
-            artigos.append({
-                "title": entry.title,
-                "url": entry.link,
-                "source": feed.feed.get("title", "RSS"),
-                "published": entry.get("published", "")
-            })
-    if not artigos:
-        return "Nenhuma notícia encontrada nos feeds configurados."
-    artigos.sort(key=lambda a: a.get("published", ""), reverse=True)
-    blocos = []
-    for a in artigos:
-        corpo = extract_article_text(a["url"])
-        blocos.append(
-            f"**{a['title']}** — _{a['source']} • {a['published']}_\n"
-            f"[Leia a notícia completa]({a['url']})\n\n{corpo}\n"
-        )
-    if gemini_model:
-        prompt = ("Resuma em até 8 linhas, em português, os principais pontos das seguintes notícias, "
-                  "com foco em valuation e riscos:\n\n" + "\n\n".join(blocos))
-        try:
-            resp = gemini_model.generate_content(prompt)
-            return resp.text.strip()
-        except Exception as e:
-            return f"[Falha ao resumir com Gemini: {e}]"
-    else:
-        return "\n\n".join(blocos[:3])
-
-
-# ==========================
-# 🔍 FILTRAGEM DE NOTÍCIAS (versão revisada, sem newspaper)
-# ==========================
-
-def match_any(text: str, words: list[str]) -> bool:
-    """Retorna True se qualquer termo da lista estiver no texto."""
-    t = (text or "").lower()
-    return any(w.lower() in t for w in words if w)
-
-def fetch_article_text(url: str) -> str:
-    """Tenta extrair o texto principal de uma página de notícia usando requests + BeautifulSoup."""
-    try:
-        resp = requests.get(url, timeout=8)
-        if resp.status_code != 200:
-            return ""
-        soup = BeautifulSoup(resp.text, "html.parser")
-        paragraphs = [p.get_text(strip=True) for p in soup.find_all("p")]
-        text = " ".join(paragraphs[:20])  # limita pra performance
-        return text[:2000]  # evita textos muito longos
-    except Exception:
-        return ""
-
-# ==========================
-# 🔧 FUNÇÃO PRINCIPAL DE BUSCA DE NOTÍCIAS
-# ==========================
-
-@st.cache_data(ttl=1800)
-def fetch_news_by_period(topic: str, terms: list[str], days: int = 3, weeks: int = 3, topk: int = 5):
-    """
-    Busca e formata notícias recentes a partir de múltiplos feeds RSS,
-    filtrando por termos específicos de cada assunto.
-    """
-    base_dt = datetime.utcnow()
-    date_from_daily = base_dt - timedelta(days=days)
-    date_from_recent = base_dt - timedelta(weeks=weeks)
-    date_to_recent = base_dt - timedelta(days=days + 1)
-
-    artigos = []
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
-        for e in feed.entries:
-            title = e.title
-            desc = e.get("summary", "")
-            if match_any(title + " " + desc, terms):
-                try:
-                    pub_dt = datetime(*e.published_parsed[:6])
-                except Exception:
-                    continue
-                artigos.append({"entry": e, "pub": pub_dt})
-
-    daily = [a["entry"] for a in artigos if a["pub"] >= date_from_daily]
-    recent = [a["entry"] for a in artigos if (date_from_recent <= a["pub"] <= date_to_recent)]
-
-    def fmt(lista):
-        lista = sorted(lista, key=lambda x: x.get("published", ""), reverse=True)[:topk]
-        if not lista:
-            return "Nenhuma notícia."
-        out = []
-        for e in lista:
-            src = e.get("source", "RSS")
-            pub = e.get("published", "")
-            link = e.link
-            preview = fetch_article_text(link)
-            out.append(f"* [{e.title}]({link}) — _{src} • {pub}_\n> {preview[:300]}...")
-        return "\n".join(out)
-
-    return fmt(daily), fmt(recent)
 
 # ============= Benchmarks =============
 @st.cache_data(ttl=3600)
