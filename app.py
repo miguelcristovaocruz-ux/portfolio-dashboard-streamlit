@@ -66,7 +66,7 @@ TRADES_BOOK = [
     {"date": dt.date(2025, 10, 21), "ticker": "GLD", "qty": -109_000, "price": 372.75}, # fomos stoppados
     {"date": dt.date(2025, 10, 27), "ticker": "GLD", "qty": 53_000, "price": 371.13}, # início de posição pós-stop
     {"date": dt.date(2025, 10, 27), "ticker": "XLF", "qty": 565_000, "price": 53.37}, # início de posição
-    {"date": dt.date(2025, 10, 27), "ticker": "TLT", "qty": -165_000, "price": 95.00}, # stop
+    {"date": dt.date(2025, 10, 27), "ticker": "TLT", "qty": -165_000, "price": 91.32}, # stop
     {"date": dt.date(2025, 10, 28), "ticker": "GLD", "qty": -53_000, "price": 361.81} # fomos stoppados
 
 ]
