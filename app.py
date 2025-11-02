@@ -1014,7 +1014,7 @@ with tab_forecast:
     st.plotly_chart(fig_hist, use_container_width=True)
 
 # ============= ATUALIZAÇÃO EM TEMPO REAL =============
-with st.tabs(["⏱️ Atualização em Tempo Real"])[0]:
+with tab_realtime:
     st.subheader("📊 Evolução Intraday do Portfólio")
 
     # --- Botão para atualizar ---
