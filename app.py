@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, time
 from openpyxl import Workbook
 import requests
 from bs4 import BeautifulSoup
+import pytz
 
 # ============= Config e Env =============
 st.set_page_config(
