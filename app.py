@@ -67,7 +67,10 @@ TRADES_BOOK = [
     {"date": dt.date(2025, 10, 27), "ticker": "GLD", "qty": 53_000, "price": 371.13}, # início de posição pós-stop
     {"date": dt.date(2025, 10, 27), "ticker": "XLF", "qty": 565_000, "price": 53.37}, # início de posição
     {"date": dt.date(2025, 10, 27), "ticker": "TLT", "qty": -165_000, "price": 91.32}, # stop
-    {"date": dt.date(2025, 10, 28), "ticker": "GLD", "qty": -53_000, "price": 361.81} # fomos stoppados
+    {"date": dt.date(2025, 10, 28), "ticker": "GLD", "qty": -53_000, "price": 361.81}, # fomos stoppados
+    {"date": dt.date(2025, 11, 3), "ticker": "XLK", "qty": 33_000, "price": 303.56}, # aumentando posição
+    {"date": dt.date(2025, 11, 3), "ticker": "XTN", "qty": -88_000, "price": 85.05}, # short
+    {"date": dt.date(2025, 11, 3), "ticker": "XLP", "qty": -98_000, "price": 76.12} # short
 
 ]
 
@@ -352,7 +355,8 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
 
     # --- Calcula o caixa ao longo do tempo ---
     cash = cash_moves.cumsum() + initial_cash
-
+    cash = cash + 284_500.0  # ajuste manual para caixa inicial correto
+    
     # --- Valor total do portfólio (ativos + caixa) ---
     port_value = (holdings * prices_df).sum(axis=1) + cash
 
