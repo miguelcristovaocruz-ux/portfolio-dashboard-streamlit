@@ -230,6 +230,24 @@ def make_cdi_series(start, end, annual_rate_percent):
     s = pd.Series(daily, index=idx)
     return (1 + s).cumprod()
 
+# === Helper: pesos com CASH residual por exposição (1 - soma |w_i|) ===
+def exposure_weights_with_residual_cash(weights_ser: pd.Series) -> pd.Series:
+    """
+    Recebe pesos por ativo (sem CASH), com sinais (long/short).
+    Retorna nova Series incluindo CASH como residual:
+        w_cash = max(0, 1 - sum(|w_i|))
+    Não reescala os demais ativos.
+    """
+    w_assets = weights_ser.astype(float).copy()
+    if "CASH" in w_assets.index:
+        w_assets = w_assets.drop("CASH", errors="ignore")
+
+    sum_abs = float(np.abs(w_assets).sum())
+    w_cash = max(0.0, 1.0 - sum_abs)
+
+    out = w_assets.copy()
+    out["CASH"] = w_cash
+    return out
 
 # ============= Benchmarks =============
 @st.cache_data(ttl=3600)
@@ -356,7 +374,7 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Calcula o caixa ao longo do tempo ---
     cash = cash_moves.cumsum() + initial_cash
     cash = cash + 284_500.0  # ajuste manual para caixa inicial correto
-    
+
     # --- Valor total do portfólio (ativos + caixa) ---
     port_value = (holdings * prices_df).sum(axis=1) + cash
 
@@ -366,8 +384,11 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Pesos dos ativos (sem incluir o caixa como ativo) ---
     weights = (holdings * prices_df).div(port_value, axis=0).fillna(0.0)
 
-    # --- Peso de caixa calculado separadamente ---
-    cash_weight = (cash / port_value).rename("CASH")
+    # --- Corrige pesos com regra de exposição (CASH = 1 - soma |w_i|) ---
+    weights = weights.apply(lambda row: exposure_weights_with_residual_cash(row), axis=1)
+
+    # --- Peso de caixa extraído da série resultante ---
+    cash_weight = weights["CASH"].copy()
 
     # --- Retorno final ---
     return {
@@ -427,16 +448,21 @@ cdi_curve = make_cdi_series(start_date, end_date, cdi_annual)
 bench_px = fetch_benchmarks(start_date, end_date)
 
 # =========================
-# Universo ativo (remove completamente CASH)
+# Universo ativo (inclui CASH residual corrigido)
 # =========================
 if use_ledger and ledger_ctx is not None:
     last_w = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
+
+    # aplica a correção de pesos (CASH = 1 - soma |w_i|)
+    last_w = exposure_weights_with_residual_cash(last_w)
+
+    # remove apenas ativos sem variação (peso nulo)
     last_w = last_w[last_w.abs() > 1e-6]
-    if "CASH" in last_w.index:
-        last_w = last_w.drop("CASH")
+
+    # universo ativo: apenas ativos com retornos disponíveis
     active_universe = [c for c in last_w.index if c in rets.columns]
 else:
-    active_universe = [c for c in rets.columns if c != "CASH" and rets[c].std() > 0]
+    active_universe = [c for c in rets.columns if rets[c].std() > 0]
 
 rets_active = rets.loc[:, rets.columns.isin(active_universe)].copy()
 
@@ -466,33 +492,28 @@ with tab_resumo:
         "Volatilidade (%)": (rets.std() * np.sqrt(TRADING_DAYS) * 100).round(2)
     })
 
-# ---- Posições do Portfólio (CASH calculado separadamente) ----
+# ---- Posições do Portfólio (CASH = 1 - soma |w_i|) ----
 st.markdown("#### Posições do Portfólio")
 show_pie = st.checkbox("Visualizar em gráfico (pizza)", value=False)
 
 if use_ledger and ledger_ctx is not None:
-    # Últimos pesos conhecidos (sem CASH)
+    # Últimos pesos conhecidos (sem CASH explícito)
     last_w = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
+
+    # Aplica a correção de pesos (CASH = 1 - soma |w_i|)
+    last_w = exposure_weights_with_residual_cash(last_w)
+
+    # Remove ativos irrelevantes (peso absoluto muito pequeno)
     last_w = last_w[last_w.abs() > 1e-6]
 
-    # Percentual e valor de caixa (apenas informativo)
-    cash_series = ledger_ctx.get("cash_weight", None)
-    if cash_series is not None:
-        cash_pct = float(cash_series.iloc[-1]) * 100
-    else:
-        cash_pct = 0.0
-
+    # Cria DataFrame da tabela de posições
     pos_df = pd.DataFrame({
         "Ativo": last_w.index,
         "Peso (%)": (last_w.values * 100).round(2)
     })
 
-    # Adiciona linha “Cash” apenas visualmente
-    if cash_pct > 0:
-        pos_df.loc[len(pos_df)] = ["CASH", round(cash_pct, 2)]
-
 else:
-    # Modo não-ledger
+    # Modo não-ledger (portfólio fixo igualitário)
     active_cols = [c for c in rets.columns if rets[c].std() > 0]
     if len(active_cols) == 0:
         pos_df = pd.DataFrame({"Ativo": [], "Peso (%)": []})
@@ -503,7 +524,7 @@ else:
             "Peso (%)": (w_eq * 100).round(2)
         })
 
-# Exibição
+# ---- Exibição (gráfico ou tabela) ----
 if show_pie and len(pos_df) > 0:
     fig_pie = px.pie(pos_df, names="Ativo", values="Peso (%)",
                      title="Ponderação das Posições (%)")
