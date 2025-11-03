@@ -685,21 +685,30 @@ else:
     m5.metric("TWR CAGR", f"{twr_cagr:.2%}")
     m6.metric("Volatilidade (anual)", f"{vol_ann:.2%}")
 
-# ---- Cálculo e exibição do "Cash" (residual) ----
+# ---- Cálculo e exibição do "Cash" (residual corrigido) ----
 if use_ledger and ledger_ctx is not None:
-    # Últimos pesos conhecidos (já sem CASH)
+    # Últimos pesos conhecidos (sem CASH explícito)
     last_w = ledger_ctx["weights"].reindex(rets.index).ffill().iloc[-1]
-    last_w = last_w[last_w.abs() > 1e-6]
-    if "CASH" in last_w.index:
-        last_w = last_w.drop("CASH")
-    soma_pesos = float(last_w.sum())
-else:
-    soma_pesos = 1.0  # modo não-ledger já assume pesos normalizados
 
-# Cash = 100% - soma dos pesos ativos
-cash_percent = max(0.0, 1.0 - soma_pesos)
+    # Aplica a correção de pesos (CASH = 1 - soma |w_i|)
+    last_w = exposure_weights_with_residual_cash(last_w)
+
+    # Garante que existe o CASH
+    cash_percent = abs(float(last_w.get("CASH", 0.0)))
+else:
+    # modo não-ledger: assume portfólio fixo igualitário
+    cash_percent = 0.0
+
+# Valor total do portfólio (último valor disponível)
+if use_ledger and ledger_ctx is not None and "port_value" in ledger_ctx:
+    final_value = float(ledger_ctx["port_value"].iloc[-1])
+else:
+    final_value = 0.0
+
+# Calcula valor monetário do caixa
 cash_value = cash_percent * final_value
 
+# ---- Exibição ----
 st.markdown("#### 💵 Composição de Caixa (CASH)")
 c1, c2 = st.columns(2)
 c1.metric("Cash (%)", f"{cash_percent*100:.2f}%")
