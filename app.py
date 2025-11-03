@@ -1171,7 +1171,7 @@ with tab_realtime:
                 y0=port.min(),
                 y1=port.max(),
                 fillcolor="lightgray",
-                opacity=0.50,
+                opacity=0.40,
                 line_width=0,
                 layer="below"
             )
@@ -1184,7 +1184,7 @@ with tab_realtime:
                 y0=port.min(),
                 y1=port.max(),
                 fillcolor="lightgray",
-                opacity=0.50,
+                opacity=0.40,
                 line_width=0,
                 layer="below"
             )
