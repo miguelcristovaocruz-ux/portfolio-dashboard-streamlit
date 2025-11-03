@@ -1152,6 +1152,43 @@ with tab_realtime:
                     hovertemplate="<b>%{x}</b><br>Variação: %{y:.2%}<extra></extra>",
                 )
             )
+
+            # --- Determina horários do pregão americano ---
+            fuso = pytz.timezone("America/Sao_Paulo")
+            base_time = port.index[0]
+            abertura = base_time.replace(hour=10, minute=30)
+            fechamento = base_time.replace(hour=17, minute=0)
+
+            # Garante que o fechamento não ultrapasse o último dado disponível
+            if fechamento > port.index[-1]:
+                fechamento = port.index[-1]
+
+            # --- Faixa cinza translúcida (pré-market) ---
+            fig.add_shape(
+                type="rect",
+                x0=port.index[0],
+                x1=abertura,
+                y0=port.min(),
+                y1=port.max(),
+                fillcolor="lightgray",
+                opacity=0.50,
+                line_width=0,
+                layer="below"
+            )
+
+            # --- Faixa cinza translúcida (pós-market) ---
+            fig.add_shape(
+                type="rect",
+                x0=fechamento,
+                x1=port.index[-1],
+                y0=port.min(),
+                y1=port.max(),
+                fillcolor="lightgray",
+                opacity=0.50,
+                line_width=0,
+                layer="below"
+            )
+
             fig.update_layout(
                 title="📈 Evolução Intraday do Portfólio",
                 xaxis_title="Horário (Brasília)",
