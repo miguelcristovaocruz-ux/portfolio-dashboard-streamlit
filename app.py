@@ -170,41 +170,44 @@ with st.sidebar.expander("Adicionar compra"):
 def fetch_prices_yq(tickers, start, end):
     """
     Busca preços históricos via YahooQuery.
-    Corrige conflitos entre datas com e sem timezone, garantindo formato consistente e inclusão do último pregão.
+    Corrige definitivamente o erro 'Cannot mix tz-aware with tz-naive values'
+    e garante que todas as datas fiquem coerentes e sem timezone.
     """
     # 🔧 Garante que a data final inclua o último pregão
     adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
 
+    # --- Baixa dados do Yahoo ---
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=adjusted_end)
 
     if df is None or len(df) == 0:
         return pd.DataFrame()
 
-    # 🔄 Se o índice for MultiIndex, resetamos para colunas normais
+    # --- Corrige estrutura ---
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
 
-    # 🧩 Determina qual coluna de preço usar
+    # Define coluna de preço preferencial
     col_price = "adjclose" if "adjclose" in df.columns else "close"
 
-    # 🔍 Seleciona e renomeia as colunas principais
+    # Seleciona e renomeia
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
 
-    # ✅ Conversão robusta de timezone
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    # ✅ Correção absoluta do timezone
+    # Passo 1: força tudo para UTC (mesmo que já tenha ou não timezone)
+    df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
 
-    # 🔎 Se qualquer data tiver timezone, converte tudo para UTC e depois remove
-    if hasattr(df["date"].dt, "tz") and df["date"].dt.tz is not None:
-        df["date"] = df["date"].dt.tz_convert(None)
-    else:
-        # Caso contrário, força conversão segura
-        df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert(None)
+    # Passo 2: remove timezone e deixa tudo “naive”
+    df["date"] = df["date"].dt.tz_convert(None)
 
-    # ✅ Pivot ordenado
+    # --- Pivot final ---
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
-    return df.dropna(how="all", axis=1)
+
+    # Remove colunas vazias
+    df = df.dropna(how="all", axis=1)
+
+    return df
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return prices.pct_change().dropna(how="all")
