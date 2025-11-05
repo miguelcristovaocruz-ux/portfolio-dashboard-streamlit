@@ -169,43 +169,42 @@ with st.sidebar.expander("Adicionar compra"):
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
     """
-    Função robusta para baixar preços do YahooQuery sem conflitos de timezone.
-    Corrige automaticamente 'Cannot mix tz-aware with tz-naive' e garante consistência de datas.
+    Versão estável para evitar 'Cannot mix tz-aware with tz-naive values'
+    e preservar todos os tickers no portfólio.
     """
-    # 🔧 Garante que start e end sejam datetime sem timezone
-    start_dt = pd.to_datetime(start).tz_localize(None)
-    end_dt = pd.to_datetime(end).tz_localize(None) + pd.Timedelta(days=1)
+    # 🔧 Garante que start e end sejam datetime.datetime sem timezone
+    start_dt = pd.Timestamp(start).to_pydatetime().replace(tzinfo=None)
+    end_dt = pd.Timestamp(end).to_pydatetime().replace(tzinfo=None) + timedelta(days=1)
 
-    # --- Coleta dados via YahooQuery ---
+    # --- Baixa dados ---
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start_dt, end=end_dt)
 
     if df is None or len(df) == 0:
+        st.warning("⚠️ Yahoo não retornou preços — dataframe vazio.")
         return pd.DataFrame()
 
-    # --- Corrige estrutura (alguns retornam MultiIndex) ---
+    # --- Corrige estrutura ---
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
 
-    # --- Coluna de preço preferencial ---
     col_price = "adjclose" if "adjclose" in df.columns else "close"
-
-    # --- Seleciona e limpa ---
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
 
-    # 🧩 Conversão robusta de timezone
-    # 1️⃣ Converte tudo para UTC (garante coerência entre tz-aware e tz-naive)
-    df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+    # ✅ Converte tudo pra datetime puro (sem timezone)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["date"] = df["date"].dt.tz_localize(None)
 
-    # 2️⃣ Remove o timezone (volta a ser naive, sem UTC)
-    df["date"] = df["date"].dt.tz_convert(None)
-
-    # ✅ Agora as datas estão 100% consistentes
-    df = df.dropna(subset=["date"])
+    # --- Pivot ordenado ---
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
 
-    # Remove colunas completamente vazias
+    # Debug opcional:
+    if df.empty:
+        st.warning("⚠️ Nenhum preço válido retornado após pivot. Verifique as datas.")
+    else:
+        st.caption(f"✅ Preços obtidos para {len(df.columns)} ativos: {list(df.columns)}")
+
     return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
