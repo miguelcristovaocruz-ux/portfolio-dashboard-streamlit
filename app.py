@@ -168,19 +168,36 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    # 🔧 Garante que a data final inclua o último pregão
-    adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
+    """
+    Corrige o erro TypeError: '<' not supported between instances of datetime.datetime and datetime.date
+    e garante que todas as datas estejam no mesmo formato datetime (sem timezone).
+    """
+    # 🔧 Garante que start e end sejam datetime.datetime sem timezone
+    start_dt = pd.to_datetime(start).replace(tzinfo=None)
+    end_dt = pd.to_datetime(end).replace(tzinfo=None) + pd.Timedelta(days=1)
 
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=adjusted_end)
+    df = t.history(start=start_dt, end=end_dt)
+
     if df is None or len(df) == 0:
         return pd.DataFrame()
+
+    # --- Corrige estrutura ---
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
+
+    # --- Define coluna de preço ---
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
+
+    # ✅ Garante datas uniformes sem timezone
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
+
+    # --- Pivot ordenado ---
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
+
+    # Remove colunas vazias
     return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
