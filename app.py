@@ -169,6 +169,8 @@ with st.sidebar.expander("Adicionar compra"):
 # ============= Funções utilitárias =============
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
+    adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
+
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=end)
     if df is None or len(df) == 0:
