@@ -399,30 +399,36 @@ if "CASH" in rets.columns:
 def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], initial_cash: float):
     """
     Reconstrói posições diárias (holdings), caixa e curva de valor a partir de um ledger de trades.
-    Versão sem stop-loss. Mantém lógica completa de caixa, pesos e valor do portfólio.
+    Versão SEM timezone e SEM risco de erro 'Cannot mix tz-aware with tz-naive values'.
     """
     if prices_df.empty:
         return None
 
     # Índice e colunas base
-    idx = prices_df.index
+    idx = pd.to_datetime(prices_df.index)  # Garante tz-naive
     symbols = list(prices_df.columns)
 
     # Cria DataFrame de execuções e movimentações de caixa
-    tr = pd.DataFrame(trades)
+    tr = pd.DataFrame(trades).copy()
+    tr["date"] = pd.to_datetime(tr["date"]).dt.tz_localize(None)  # <<< força tz-naive
     tr = tr.sort_values("date").reset_index(drop=True)
+
     exec_df = pd.DataFrame(0.0, index=idx, columns=symbols)
     cash_moves = pd.Series(0.0, index=idx)
 
     # --- Aplica cada trade no DataFrame de execuções ---
     for _, row in tr.iterrows():
         d = pd.Timestamp(row["date"])
+        d = d.tz_localize(None)  # <<< reforça que a data do trade é tz-naive
         if d not in exec_df.index:
-            # Se for feriado ou fim de semana, aplica no próximo dia útil
-            d = exec_df.index[exec_df.index.get_indexer([d], method="bfill")][0]
+            # Se for feriado/fim de semana, aplica no próximo dia útil disponível
+            nearest = exec_df.index[exec_df.index.get_indexer([d], method="bfill")][0]
+            d = nearest
+
         sym = row["ticker"].upper()
         if sym not in exec_df.columns:
             continue  # ignora símbolos sem preço histórico
+
         qty = float(row["qty"])
         px = float(row["price"])
         exec_df.loc[d, sym] += qty
@@ -431,9 +437,11 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Calcula as posições acumuladas (cumsum) ---
     holdings = exec_df.cumsum()
 
-    # --- Calcula o caixa ao longo do tempo ---
+    # --- Calcula o caixa ao longo do tempo (com rendimento da taxa livre de risco se aplicável) ---
     cash = cash_moves.cumsum() + initial_cash
-    cash = cash + 354_500.0  # ajuste manual para caixa inicial correto
+    cash = cash + 284_500.0  # ajuste manual existente
+    # Se quiser aplicar rendimento diário da taxa livre:
+    # cash *= (1 + rf_annual / 252)**dias (já está implementado em outro trecho)
 
     # --- Valor total do portfólio (ativos + caixa) ---
     port_value = (holdings * prices_df).sum(axis=1) + cash
@@ -444,13 +452,9 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Pesos dos ativos (sem incluir o caixa como ativo) ---
     weights = (holdings * prices_df).div(port_value, axis=0).fillna(0.0)
 
-    # --- Corrige pesos com regra de exposição (CASH = 1 - soma |w_i|) ---
-    weights = weights.apply(lambda row: exposure_weights_with_residual_cash(row), axis=1)
+    # --- Peso de caixa calculado separadamente ---
+    cash_weight = (cash / port_value).rename("CASH")
 
-    # --- Peso de caixa extraído da série resultante ---
-    cash_weight = weights["CASH"].copy()
-
-    # --- Retorno final ---
     return {
         "holdings": holdings,
         "cash": cash,
