@@ -168,46 +168,20 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    """
-    Busca preços históricos via YahooQuery.
-    Corrige definitivamente o erro 'Cannot mix tz-aware with tz-naive values'
-    e garante que todas as datas fiquem coerentes e sem timezone.
-    """
     # 🔧 Garante que a data final inclua o último pregão
     adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
 
-    # --- Baixa dados do Yahoo ---
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=adjusted_end)
-
     if df is None or len(df) == 0:
         return pd.DataFrame()
-
-    # --- Corrige estrutura ---
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
-
-    # Define coluna de preço preferencial
     col_price = "adjclose" if "adjclose" in df.columns else "close"
-
-    # Seleciona e renomeia
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
-
-    # ✅ Correção absoluta do timezone
-    # Passo 1: força tudo para UTC (mesmo que já tenha ou não timezone)
-    df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
-
-    # Passo 2: remove timezone e deixa tudo “naive”
-    df["date"] = df["date"].dt.tz_convert(None)
-
-    # --- Pivot final ---
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
-
-    # Remove colunas vazias
-    df = df.dropna(how="all", axis=1)
-
-    return df
+    return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return prices.pct_change().dropna(how="all")
