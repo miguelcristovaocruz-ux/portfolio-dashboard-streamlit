@@ -169,10 +169,11 @@ with st.sidebar.expander("Adicionar compra"):
 # ============= Funções utilitárias =============
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
+    # 🔧 Garante que a data final inclua o último pregão
     adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
 
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=end)
+    df = t.history(start=start, end=adjusted_end)
     if df is None or len(df) == 0:
         return pd.DataFrame()
     if isinstance(df.index, pd.MultiIndex):
@@ -180,6 +181,11 @@ def fetch_prices_yq(tickers, start, end):
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
+
+    # ✅ Converte todas as datas para datetime consistente
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+
+    # ✅ Pivot ordenado
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
     return df.dropna(how="all", axis=1)
 
