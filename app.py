@@ -168,55 +168,23 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    """
-    Versão 100% estável da função de coleta de preços do YahooQuery.
-    - Elimina qualquer traço de timezone (tz-aware)
-    - Corrige mistura de datas UTC e locais
-    - Garante que o índice final seja tz-naive e coerente
-    """
-    
-    st.markdown("### 🧩 Diagnóstico de Dados (YahooQuery)")
-    st.caption(f"Baixando preços para: **{', '.join(tickers)}**")
+    # 🔧 Garante que a data final inclua o último pregão
+    adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
 
-    # --- Garante datas coerentes (datetime puro, sem timezone)
-    start_dt = pd.Timestamp(start).to_pydatetime().replace(tzinfo=None)
-    end_dt = (pd.Timestamp(end) + pd.Timedelta(days=1)).to_pydatetime().replace(tzinfo=None)
-
-    # --- Baixa dados
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start_dt, end=end_dt)
-
+    df = t.history(start=start, end=adjusted_end)
     if df is None or len(df) == 0:
-        st.error("❌ Yahoo não retornou preços — dataframe vazio.")
         return pd.DataFrame()
-
-    # --- Corrige estrutura
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
-
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
-
-    # 🔧 Normaliza a coluna de datas removendo QUALQUER timezone
-    df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=False)
-    df["date"] = df["date"].apply(lambda x: x.replace(tzinfo=None) if pd.notna(x) else x)
-
-    # --- Pivot e ordena ---
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
+    return df.dropna(how="all", axis=1)
 
-    # ✅ Remove qualquer timezone residual que o YahooQuery possa ter deixado no índice
-    df.index = pd.to_datetime(df.index).map(lambda x: x.replace(tzinfo=None))
-    df = df.astype(float).dropna(how="all", axis=1)
-
-    # --- Diagnóstico simples ---
-    if df.empty:
-        st.error("❌ Nenhum preço válido retornado após pivot.")
-    else:
-        st.success(f"✅ Preços obtidos para {len(df.columns)} ativos (sem timezone).")
-        st.caption(f"Período: {df.index.min().date()} → {df.index.max().date()}")
-
-    return df
+def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    return prices.pct_change().dropna(how="all")
 
 TRADING_DAYS = 252
 
@@ -373,36 +341,30 @@ if "CASH" in rets.columns:
 def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], initial_cash: float):
     """
     Reconstrói posições diárias (holdings), caixa e curva de valor a partir de um ledger de trades.
-    Versão SEM timezone e SEM risco de erro 'Cannot mix tz-aware with tz-naive values'.
+    Versão sem stop-loss. Mantém lógica completa de caixa, pesos e valor do portfólio.
     """
     if prices_df.empty:
         return None
 
     # Índice e colunas base
-    idx = pd.to_datetime(prices_df.index)  # Garante tz-naive
+    idx = prices_df.index
     symbols = list(prices_df.columns)
 
     # Cria DataFrame de execuções e movimentações de caixa
-    tr = pd.DataFrame(trades).copy()
-    tr["date"] = pd.to_datetime(tr["date"]).dt.tz_localize(None)  # <<< força tz-naive
+    tr = pd.DataFrame(trades)
     tr = tr.sort_values("date").reset_index(drop=True)
-
     exec_df = pd.DataFrame(0.0, index=idx, columns=symbols)
     cash_moves = pd.Series(0.0, index=idx)
 
     # --- Aplica cada trade no DataFrame de execuções ---
     for _, row in tr.iterrows():
         d = pd.Timestamp(row["date"])
-        d = d.tz_localize(None)  # <<< reforça que a data do trade é tz-naive
         if d not in exec_df.index:
-            # Se for feriado/fim de semana, aplica no próximo dia útil disponível
-            nearest = exec_df.index[exec_df.index.get_indexer([d], method="bfill")][0]
-            d = nearest
-
+            # Se for feriado ou fim de semana, aplica no próximo dia útil
+            d = exec_df.index[exec_df.index.get_indexer([d], method="bfill")][0]
         sym = row["ticker"].upper()
         if sym not in exec_df.columns:
             continue  # ignora símbolos sem preço histórico
-
         qty = float(row["qty"])
         px = float(row["price"])
         exec_df.loc[d, sym] += qty
@@ -411,11 +373,9 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Calcula as posições acumuladas (cumsum) ---
     holdings = exec_df.cumsum()
 
-    # --- Calcula o caixa ao longo do tempo (com rendimento da taxa livre de risco se aplicável) ---
+    # --- Calcula o caixa ao longo do tempo ---
     cash = cash_moves.cumsum() + initial_cash
-    cash = cash + 284_500.0  # ajuste manual existente
-    # Se quiser aplicar rendimento diário da taxa livre:
-    # cash *= (1 + rf_annual / 252)**dias (já está implementado em outro trecho)
+    cash = cash + 354_500.0  # ajuste manual para caixa inicial correto
 
     # --- Valor total do portfólio (ativos + caixa) ---
     port_value = (holdings * prices_df).sum(axis=1) + cash
@@ -426,9 +386,13 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Pesos dos ativos (sem incluir o caixa como ativo) ---
     weights = (holdings * prices_df).div(port_value, axis=0).fillna(0.0)
 
-    # --- Peso de caixa calculado separadamente ---
-    cash_weight = (cash / port_value).rename("CASH")
+    # --- Corrige pesos com regra de exposição (CASH = 1 - soma |w_i|) ---
+    weights = weights.apply(lambda row: exposure_weights_with_residual_cash(row), axis=1)
 
+    # --- Peso de caixa extraído da série resultante ---
+    cash_weight = weights["CASH"].copy()
+
+    # --- Retorno final ---
     return {
         "holdings": holdings,
         "cash": cash,
