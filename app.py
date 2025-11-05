@@ -166,28 +166,45 @@ with st.sidebar.expander("Adicionar compra"):
         else:
             st.warning("Preencha todos os campos.")
 
-# ============= Funções utilitárias =============
+# ============= Função de Preços (corrigida com timezone seguro) =============
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    # 🔧 Garante que a data final inclua o último pregão
+    """
+    Busca preços históricos via YahooQuery (ajustada para timezone seguro e data final inclusiva).
+    Corrige o erro de 'Cannot mix tz-aware with tz-naive values' e garante inclusão do último pregão.
+    """
+    # 🔧 Ajusta a data final para incluir o último pregão disponível
     adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
 
-    t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=adjusted_end)
+    try:
+        t = Ticker(tickers, asynchronous=True)
+        df = t.history(start=start, end=adjusted_end)
+    except Exception:
+        return pd.DataFrame()
+
     if df is None or len(df) == 0:
         return pd.DataFrame()
+
+    # 🔄 Se o índice for MultiIndex, resetamos para colunas normais
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
+
+    # 🧩 Determina qual coluna de preço usar
     col_price = "adjclose" if "adjclose" in df.columns else "close"
+
+    # 🔍 Seleciona e renomeia as colunas principais
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
 
-    # ✅ Converte todas as datas para datetime consistente
-    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    # ✅ Normaliza datas garantindo consistência entre tz-aware e tz-naive
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+    df["date"] = df["date"].dt.tz_convert(None)  # remove timezone (fica "naive")
 
-    # ✅ Pivot ordenado
+    # ✅ Pivot ordenado e limpeza final
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
-    return df.dropna(how="all", axis=1)
+    df = df.dropna(how="all", axis=1)
+
+    return df
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return prices.pct_change().dropna(how="all")
