@@ -169,23 +169,20 @@ with st.sidebar.expander("Adicionar compra"):
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
     """
-    Versão FINAL e estável da função de coleta de preços do YahooQuery.
-    - Remove completamente qualquer manipulação de timezone
-    - Garante coerência de datas (sem mix tz-aware/naive)
-    - Mantém diagnóstico de ativos e datas
+    Versão 100% estável da função de coleta de preços do YahooQuery.
+    - Elimina qualquer traço de timezone (tz-aware)
+    - Corrige mistura de datas UTC e locais
+    - Garante que o índice final seja tz-naive e coerente
     """
-    import pandas as pd
-    from yahooquery import Ticker
-    from datetime import timedelta
-
+    
     st.markdown("### 🧩 Diagnóstico de Dados (YahooQuery)")
     st.caption(f"Baixando preços para: **{', '.join(tickers)}**")
 
-    # --- Garante que as datas sejam datetime.datetime normal (sem timezone) ---
-    start_dt = pd.Timestamp(start).to_pydatetime()
-    end_dt = (pd.Timestamp(end) + pd.Timedelta(days=1)).to_pydatetime()
+    # --- Garante datas coerentes (datetime puro, sem timezone)
+    start_dt = pd.Timestamp(start).to_pydatetime().replace(tzinfo=None)
+    end_dt = (pd.Timestamp(end) + pd.Timedelta(days=1)).to_pydatetime().replace(tzinfo=None)
 
-    # --- Baixa dados ---
+    # --- Baixa dados
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start_dt, end=end_dt)
 
@@ -193,56 +190,33 @@ def fetch_prices_yq(tickers, start, end):
         st.error("❌ Yahoo não retornou preços — dataframe vazio.")
         return pd.DataFrame()
 
-    # --- Corrige estrutura ---
+    # --- Corrige estrutura
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
 
-    # --- Escolhe a coluna de preço ---
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
 
-    # ✅ Converte todas as datas para datetime puro (sem timezone)
+    # 🔧 Normaliza a coluna de datas removendo QUALQUER timezone
     df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=False)
-    df = df.dropna(subset=["date"])
-
-    # 🔧 Garante tipo datetime64[ns] consistente
-    df["date"] = df["date"].astype("datetime64[ns]")
+    df["date"] = df["date"].apply(lambda x: x.replace(tzinfo=None) if pd.notna(x) else x)
 
     # --- Pivot e ordena ---
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
-    df = df.dropna(how="all", axis=1)
 
-    # =============================
-    # 🔍 Diagnóstico detalhado
-    # =============================
+    # ✅ Remove qualquer timezone residual que o YahooQuery possa ter deixado no índice
+    df.index = pd.to_datetime(df.index).map(lambda x: x.replace(tzinfo=None))
+    df = df.astype(float).dropna(how="all", axis=1)
+
+    # --- Diagnóstico simples ---
     if df.empty:
-        st.error("❌ Nenhum preço válido retornado após pivot. Verifique as datas de início e fim.")
+        st.error("❌ Nenhum preço válido retornado após pivot.")
     else:
-        st.success(f"✅ Preços obtidos para {len(df.columns)} ativos.")
-
-        # Verifica cobertura de dados por ativo
-        last_date = df.index.max()
-        coverage_report = []
-        for sym in tickers:
-            if sym not in df.columns:
-                coverage_report.append((sym, "⚠️ Sem dados"))
-            else:
-                last_valid = df[sym].dropna().index.max() if not df[sym].dropna().empty else None
-                if last_valid is None:
-                    coverage_report.append((sym, "❌ Sem dados"))
-                elif (last_date - last_valid).days > 2:
-                    coverage_report.append((sym, f"⚠️ Desatualizado ({last_valid.date()})"))
-                else:
-                    coverage_report.append((sym, f"✅ OK ({last_valid.date()})"))
-
-        diag_df = pd.DataFrame(coverage_report, columns=["Ativo", "Status"])
-        st.dataframe(diag_df, hide_index=True, use_container_width=True)
+        st.success(f"✅ Preços obtidos para {len(df.columns)} ativos (sem timezone).")
+        st.caption(f"Período: {df.index.min().date()} → {df.index.max().date()}")
 
     return df
-
-def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return prices.pct_change().dropna(how="all")
 
 TRADING_DAYS = 252
 
