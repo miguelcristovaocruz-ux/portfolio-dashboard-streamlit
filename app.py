@@ -169,43 +169,77 @@ with st.sidebar.expander("Adicionar compra"):
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
     """
-    Versão estável para evitar 'Cannot mix tz-aware with tz-naive values'
-    e preservar todos os tickers no portfólio.
+    Versão FINAL e estável da função de coleta de preços do YahooQuery.
+    - Remove completamente qualquer manipulação de timezone
+    - Garante coerência de datas (sem mix tz-aware/naive)
+    - Mantém diagnóstico de ativos e datas
     """
-    # 🔧 Garante que start e end sejam datetime.datetime sem timezone
-    start_dt = pd.Timestamp(start).to_pydatetime().replace(tzinfo=None)
-    end_dt = pd.Timestamp(end).to_pydatetime().replace(tzinfo=None) + timedelta(days=1)
+    import pandas as pd
+    from yahooquery import Ticker
+    from datetime import timedelta
+
+    st.markdown("### 🧩 Diagnóstico de Dados (YahooQuery)")
+    st.caption(f"Baixando preços para: **{', '.join(tickers)}**")
+
+    # --- Garante que as datas sejam datetime.datetime normal (sem timezone) ---
+    start_dt = pd.Timestamp(start).to_pydatetime()
+    end_dt = (pd.Timestamp(end) + pd.Timedelta(days=1)).to_pydatetime()
 
     # --- Baixa dados ---
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start_dt, end=end_dt)
 
     if df is None or len(df) == 0:
-        st.warning("⚠️ Yahoo não retornou preços — dataframe vazio.")
+        st.error("❌ Yahoo não retornou preços — dataframe vazio.")
         return pd.DataFrame()
 
     # --- Corrige estrutura ---
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
 
+    # --- Escolhe a coluna de preço ---
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
 
-    # ✅ Converte tudo pra datetime puro (sem timezone)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["date"] = df["date"].dt.tz_localize(None)
+    # ✅ Converte todas as datas para datetime puro (sem timezone)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=False)
+    df = df.dropna(subset=["date"])
 
-    # --- Pivot ordenado ---
+    # 🔧 Garante tipo datetime64[ns] consistente
+    df["date"] = df["date"].astype("datetime64[ns]")
+
+    # --- Pivot e ordena ---
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
+    df = df.dropna(how="all", axis=1)
 
-    # Debug opcional:
+    # =============================
+    # 🔍 Diagnóstico detalhado
+    # =============================
     if df.empty:
-        st.warning("⚠️ Nenhum preço válido retornado após pivot. Verifique as datas.")
+        st.error("❌ Nenhum preço válido retornado após pivot. Verifique as datas de início e fim.")
     else:
-        st.caption(f"✅ Preços obtidos para {len(df.columns)} ativos: {list(df.columns)}")
+        st.success(f"✅ Preços obtidos para {len(df.columns)} ativos.")
 
-    return df.dropna(how="all", axis=1)
+        # Verifica cobertura de dados por ativo
+        last_date = df.index.max()
+        coverage_report = []
+        for sym in tickers:
+            if sym not in df.columns:
+                coverage_report.append((sym, "⚠️ Sem dados"))
+            else:
+                last_valid = df[sym].dropna().index.max() if not df[sym].dropna().empty else None
+                if last_valid is None:
+                    coverage_report.append((sym, "❌ Sem dados"))
+                elif (last_date - last_valid).days > 2:
+                    coverage_report.append((sym, f"⚠️ Desatualizado ({last_valid.date()})"))
+                else:
+                    coverage_report.append((sym, f"✅ OK ({last_valid.date()})"))
+
+        diag_df = pd.DataFrame(coverage_report, columns=["Ativo", "Status"])
+        st.dataframe(diag_df, hide_index=True, use_container_width=True)
+
+    return df
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return prices.pct_change().dropna(how="all")
