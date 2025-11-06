@@ -168,8 +168,6 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    # 🔧 Garante que a data final inclua o último pregão
-    adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
 
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=adjusted_end)
