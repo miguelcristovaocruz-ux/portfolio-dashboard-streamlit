@@ -51,12 +51,12 @@ TRADES_BOOK = [
     {"date": dt.date(2025, 9, 1),  "ticker": "GLD", "qty":  47_000,  "price": 314.72},
     {"date": dt.date(2025, 9, 1),  "ticker": "XLP", "qty": -185_000, "price":  80.44},  # short
     {"date": dt.date(2025, 9, 1),  "ticker": "XLP", "qty":  185_000, "price":  80.52},  # stop (zerando)
-    {"date": dt.date(2025, 9, 8),  "ticker": "XLE", "qty": -110_000, "price":  86.77},  # stop (zerando)
-    {"date": dt.date(2025, 9, 22), "ticker": "XLK", "qty":  54_000,  "price": 278.15},
-    {"date": dt.date(2025, 9, 22), "ticker": "GLD", "qty":  15_000,  "price": 342.75},
-    {"date": dt.date(2025, 9, 22), "ticker": "XLB", "qty": -111_000, "price":  90.37},  # short
-    {"date": dt.date(2025, 9, 24), "ticker": "XLK", "qty":  19_000,  "price": 277.52},
-    {"date": dt.date(2025, 9, 25), "ticker": "XLK", "qty":  19_000,  "price": 275.96},
+    {"date": dt.date(2025, 9, 1),  "ticker": "XLE", "qty": -110_000, "price":  86.77},  # stop (zerando)
+    {"date": dt.date(2025, 9, 21), "ticker": "XLK", "qty":  54_000,  "price": 278.15},
+    {"date": dt.date(2025, 9, 21), "ticker": "GLD", "qty":  15_000,  "price": 342.75},
+    {"date": dt.date(2025, 9, 21), "ticker": "XLB", "qty": -111_000, "price":  90.37},  # short
+    {"date": dt.date(2025, 9, 21), "ticker": "XLK", "qty":  19_000,  "price": 277.52},
+    {"date": dt.date(2025, 9, 21), "ticker": "XLK", "qty":  19_000,  "price": 275.96},
     {"date": dt.date(2025, 10, 13), "ticker": "XLB", "qty": 111_000, "price": 88.58},    # stop zerando
     {"date": dt.date(2025, 10, 13), "ticker": "FXE", "qty":  -92_000, "price": 106.78}, # stop zerando
     {"date": dt.date(2025, 10, 13), "ticker": "GLD", "qty": 27_000, "price": 376.50}, # aumento de posição
@@ -381,7 +381,7 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Correção pontual de caixa: gera um DEGRAU a partir da data do ajuste ---
 
     CORRECAO_DATA  = "2025-10-21"   # <<< coloque a data real do seu ajuste
-    CORRECAO_VALOR = -7_000     # <<< coloque o valor correto (ex.: 354_000.0)
+    CORRECAO_VALOR = 0      # <<< coloque o valor correto (ex.: 354_000.0)
 
     flows = pd.Series(0.0, index=cash.index)
     d = pd.to_datetime(CORRECAO_DATA).normalize()
@@ -727,7 +727,7 @@ else:
     final_value = 0.0
 
 # Calcula valor monetário do caixa
-cash_value = cash_percent * final_value
+cash_value = (cash_percent * final_value)
 
 # ---- Exibição ----
 st.markdown("#### 💵 Composição de Caixa (CASH)")
