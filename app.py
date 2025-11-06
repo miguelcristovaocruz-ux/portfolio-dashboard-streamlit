@@ -376,10 +376,27 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     holdings = exec_df.cumsum()
 
     # --- Calcula o caixa ao longo do tempo ---
-    cash = cash_moves.cumsum() + initial_cash + 354_500.0
+    cash = cash_moves.cumsum() + initial_cash
+
+    # --- Correção pontual de caixa: gera um DEGRAU a partir da data do ajuste ---
+
+    CORRECAO_DATA  = "2025-10-21"   # <<< coloque a data real do seu ajuste
+    CORRECAO_VALOR = 354_500.0      # <<< coloque o valor correto (ex.: 354_000.0)
+
+    flows = pd.Series(0.0, index=cash.index)
+    d = pd.to_datetime(CORRECAO_DATA).normalize()
+    if d not in flows.index:
+        # se cair em fds/feriado ou fora do índice, empurra para o próximo dia disponível
+        pos = flows.index.get_indexer([d], method="bfill")[0]
+        d = flows.index[pos]
+    flows.loc[d] += float(CORRECAO_VALOR)
+
+    # soma o cumulativo do fluxo ao caixa (degrau a partir de d)
+    cash = cash.add(flows.cumsum(), fill_value=0.0)
 
     # --- Valor total do portfólio (ativos + caixa) ---
-    port_value = (holdings * prices_df).sum(axis=1) + cash
+    positions_value = (holdings * prices_df).sum(axis=1)
+    port_value = positions_value.add(cash, fill_value=0.0)
 
     # --- Retornos diários do portfólio ---
     port_ret = port_value.pct_change().fillna(0.0)
