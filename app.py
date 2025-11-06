@@ -168,17 +168,20 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
+    fuso = pytz.timezone("America/Sao_Paulo")
 
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=end)
     if df is None or len(df) == 0:
+    
         return pd.DataFrame()
+    
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
-    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.date  # converte para datetime.date
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(fuso)  # converte para datetime.date
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
     return df.dropna(how="all", axis=1)
 
