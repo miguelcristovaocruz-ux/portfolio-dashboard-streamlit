@@ -381,7 +381,7 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Correção pontual de caixa: gera um DEGRAU a partir da data do ajuste ---
 
     CORRECAO_DATA  = "2025-10-21"   # <<< coloque a data real do seu ajuste
-    CORRECAO_VALOR = 382_890.0      # <<< coloque o valor correto (ex.: 354_000.0)
+    CORRECAO_VALOR = 382_500.0      # <<< coloque o valor correto (ex.: 354_000.0)
 
     flows = pd.Series(0.0, index=cash.index)
     d = pd.to_datetime(CORRECAO_DATA).normalize()
@@ -449,7 +449,8 @@ if not use_ledger:
 # Séries do portfólio
 # =========================
 if use_ledger and ledger_ctx is not None:
-    curva_port = (ledger_ctx["port_value"] / ledger_ctx["port_value"].iloc[0]).reindex(rets.index).ffill()
+    serie_port = ledger_ctx["port_value"].reindex(rets.index).ffill()
+    curva_port = serie_port / float(serie_port.iloc[0])
     port_daily = ledger_ctx["port_ret"].reindex(rets.index).fillna(0.0)
 else:
     port_daily = rets.dot(w_real)
@@ -671,7 +672,7 @@ else:
     if use_ledger and ledger_ctx is not None:
         aportes = 0.0
         serie_port = ledger_ctx["port_value"].reindex(rets.index).ffill()
-        final_value = serie_port
+        final_value = float(serie_port.iloc[-1])
         net_profit = final_value - initial_capital - aportes
         twr_total_return = final_value / initial_capital - 1
         years = max((serie_port.index[-1] - serie_port.index[0]).days / 365.25, 1e-9)
