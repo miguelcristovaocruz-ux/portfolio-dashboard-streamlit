@@ -170,7 +170,7 @@ with st.sidebar.expander("Adicionar compra"):
 def fetch_prices_yq(tickers, start, end):
 
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=adjusted_end)
+    df = t.history(start=start, end=end)
     if df is None or len(df) == 0:
         return pd.DataFrame()
     if isinstance(df.index, pd.MultiIndex):
