@@ -671,7 +671,7 @@ else:
     if use_ledger and ledger_ctx is not None:
         aportes = 0.0
         serie_port = [(ledger_ctx["port_value"] / ledger_ctx["port_value"].iloc[0]).reindex(rets.index).ffill()] * 100_000_000.0
-        final_value = float(serie_port.iloc[-1])
+        final_value = (serie_port.iloc[-1])
         net_profit = final_value - initial_capital - aportes
         twr_total_return = final_value / initial_capital - 1
         years = max((serie_port.index[-1] - serie_port.index[0]).days / 365.25, 1e-9)
