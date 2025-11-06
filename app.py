@@ -381,7 +381,7 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Correção pontual de caixa: gera um DEGRAU a partir da data do ajuste ---
 
     CORRECAO_DATA  = "2025-10-21"   # <<< coloque a data real do seu ajuste
-    CORRECAO_VALOR = 354_500.0      # <<< coloque o valor correto (ex.: 354_000.0)
+    CORRECAO_VALOR = 382_890.0      # <<< coloque o valor correto (ex.: 354_000.0)
 
     flows = pd.Series(0.0, index=cash.index)
     d = pd.to_datetime(CORRECAO_DATA).normalize()
