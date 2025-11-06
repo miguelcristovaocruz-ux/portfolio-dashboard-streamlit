@@ -178,7 +178,7 @@ def fetch_prices_yq(tickers, start, end):
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
-    df["date"] = pd.to_datetime(df["date"]).dt.date  # converte para datetime.date
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.date  # converte para datetime.date
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
     return df.dropna(how="all", axis=1)
 
