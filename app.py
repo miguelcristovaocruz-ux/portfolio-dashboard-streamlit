@@ -376,8 +376,7 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     holdings = exec_df.cumsum()
 
     # --- Calcula o caixa ao longo do tempo ---
-    cash = cash_moves.cumsum() + initial_cash
-    cash = cash + 354_500.0  # ajuste manual para caixa inicial correto
+    cash = cash_moves.cumsum() + initial_cash + 354_500.0
 
     # --- Valor total do portfólio (ativos + caixa) ---
     port_value = (holdings * prices_df).sum(axis=1) + cash
