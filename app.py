@@ -450,7 +450,7 @@ if not use_ledger:
 # =========================
 if use_ledger and ledger_ctx is not None:
     serie_port = ledger_ctx["port_value"].reindex(rets.index).ffill()
-    curva_port = serie_port / float(serie_port.iloc[0])
+    curva_port = serie_port / float(initial_capital)
     port_daily = ledger_ctx["port_ret"].reindex(rets.index).fillna(0.0)
 else:
     port_daily = rets.dot(w_real)
@@ -672,7 +672,7 @@ else:
     if use_ledger and ledger_ctx is not None:
         aportes = 0.0
         serie_port = ledger_ctx["port_value"].reindex(rets.index).ffill()
-        final_value = float((serie_port.iloc[-1]) * float(serie_port.iloc[0]))
+        final_value = float(serie_port.iloc[-1])
         net_profit = final_value - initial_capital - aportes
         twr_total_return = final_value / initial_capital - 1
         years = max((serie_port.index[-1] - serie_port.index[0]).days / 365.25, 1e-9)
