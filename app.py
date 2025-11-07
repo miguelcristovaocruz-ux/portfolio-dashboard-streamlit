@@ -70,7 +70,8 @@ TRADES_BOOK = [
     {"date": dt.date(2025, 10, 28), "ticker": "GLD", "qty": -53_000, "price": 361.81}, # fomos stoppados
     {"date": dt.date(2025, 11, 3), "ticker": "XLK", "qty": 33_000, "price": 303.56}, # aumentando posição
     {"date": dt.date(2025, 11, 3), "ticker": "XTN", "qty": -88_000, "price": 85.05}, # short
-    {"date": dt.date(2025, 11, 3), "ticker": "XLP", "qty": -98_000, "price": 76.12} # short
+    {"date": dt.date(2025, 11, 3), "ticker": "XLP", "qty": -98_000, "price": 76.12}, # short
+    {"date": dt.date(2025, 11, 6), "ticker": "XLK", "qty": -125_000, "price": 288.65} #fomos stoppados
 
 ]
 
@@ -171,7 +172,7 @@ def fetch_prices_yq(tickers, start, end):
     fuso = pytz.timezone("America/Sao_Paulo")
 
     adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
-    
+
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=adjusted_end)
     if df is None or len(df) == 0:
