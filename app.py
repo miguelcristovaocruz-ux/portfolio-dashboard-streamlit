@@ -180,7 +180,7 @@ def fetch_prices_yq(tickers, start, end):
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
     col_price = "adjclose" if "adjclose" in df.columns else "close"
-    df = df[["symbol", "date", col_price]]
+    df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
     df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None).dt.date
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
