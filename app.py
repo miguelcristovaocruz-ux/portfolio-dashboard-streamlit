@@ -173,26 +173,27 @@ def fetch_prices_yq(tickers, start, end):
 
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=end + dt.timedelta(days=1), interval="1d")
+
     if df is None or len(df) == 0:
-    
         return pd.DataFrame()
-    
+
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
+
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
-    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None).dt.date
-            
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
-    
-    all_days = pd.date_range(start=start, end=end, freq="B").date
+
+    all_days = pd.date_range(start=start, end=end, freq="B")
     df = df.reindex(all_days)
 
     return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return prices.pct_change().dropna(how="all", axis=1)
+    return prices.pct_change(fill_method=None).dropna(how="all", axis=1)
 
 TRADING_DAYS = 252
 
