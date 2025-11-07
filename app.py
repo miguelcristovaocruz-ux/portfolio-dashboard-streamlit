@@ -171,7 +171,7 @@ with st.sidebar.expander("Adicionar compra"):
 def fetch_prices_yq(tickers, start, end):
     fuso = pytz.timezone("America/Sao_Paulo")
 
-    adjusted_end = pd.to_datetime(end) - pd.Timedelta(days=0)
+    adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
 
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=adjusted_end)
