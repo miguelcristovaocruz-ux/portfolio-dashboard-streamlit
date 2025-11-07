@@ -169,12 +169,13 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    # 🔧 Força datas de entrada a serem timezone-naive
+    # Garante datas naive
     start = pd.Timestamp(start).tz_localize(None)
     end = pd.Timestamp(end).tz_localize(None)
 
+    # YahooQuery pode não incluir o último dia se estiver "muito perto"
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=end, interval="1d")
+    df = t.history(start=start, end=end + dt.timedelta(days=1), interval="1d")
 
     if df is None or len(df) == 0:
         return pd.DataFrame()
@@ -186,15 +187,15 @@ def fetch_prices_yq(tickers, start, end):
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
 
-    # 🔧 Remove qualquer timezone das datas retornadas
+    # Converte para datetime naive e filtra datas dentro de start e end
     df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    df = df[df["date"].between(start, end)]  # 🔧 garante que só datas entre start e end fiquem
 
-    # 🔧 Cria DataFrame de preços
+    # 🔧 Cria pivot depois de garantir todas as datas válidas
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
 
-    # 🔧 Garante todas as datas úteis, sem timezone
-    all_days = pd.date_range(start=start, end=end, freq="B", tz=None)
-    all_days = all_days.tz_localize(None)  # força a ficar naive
+    # 🔧 Garante todos os dias úteis
+    all_days = pd.date_range(start=start, end=end, freq="B")
     df = df.reindex(all_days)
 
     return df.dropna(how="all", axis=1)
