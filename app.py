@@ -188,7 +188,7 @@ def fetch_prices_yq(tickers, start, end):
     df = df.rename(columns={col_price: "price"})
 
     # Converte para datetime naive e filtra datas dentro de start e end
-    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None)
     df = df[df["date"].between(start, end)]  # 🔧 garante que só datas entre start e end fiquem
 
     # 🔧 Cria pivot depois de garantir todas as datas válidas
