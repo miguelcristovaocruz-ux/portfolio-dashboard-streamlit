@@ -169,10 +169,12 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    fuso = pytz.timezone("America/Sao_Paulo")
+    # 🔧 Força datas de entrada a serem timezone-naive
+    start = pd.Timestamp(start).tz_localize(None)
+    end = pd.Timestamp(end).tz_localize(None)
 
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=end + dt.timedelta(days=1), interval="1d")
+    df = t.history(start=start, end=end + dt.Timedelta(days=1), interval="1d")
 
     if df is None or len(df) == 0:
         return pd.DataFrame()
@@ -183,17 +185,22 @@ def fetch_prices_yq(tickers, start, end):
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
-    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.date
 
+    # 🔧 Remove qualquer timezone das datas retornadas
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+
+    # 🔧 Cria DataFrame de preços
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
 
-    all_days = pd.date_range(start=start, end=end, freq="B")
+    # 🔧 Garante todas as datas úteis, sem timezone
+    all_days = pd.date_range(start=start, end=end, freq="B", tz=None)
+    all_days = all_days.tz_localize(None)  # força a ficar naive
     df = df.reindex(all_days)
 
     return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return prices.pct_change.dropna(how="all", axis=1)
+    return prices.pct_change(fill_method=None).dropna(how="all", axis=1)
 
 TRADING_DAYS = 252
 
