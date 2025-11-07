@@ -172,7 +172,7 @@ def fetch_prices_yq(tickers, start, end):
     fuso = pytz.timezone("America/Sao_Paulo")
 
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=end)
+    df = t.history(start=start, end=end + dt.timedelta(days=1), interval="1d")
     if df is None or len(df) == 0:
     
         return pd.DataFrame()
