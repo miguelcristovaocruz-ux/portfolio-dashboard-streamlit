@@ -174,7 +174,7 @@ def fetch_prices_yq(tickers, start, end):
     end = pd.Timestamp(end).tz_localize(None)
 
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=end + dt.Timedelta(days=1), interval="1d")
+    df = t.history(start=start, end=end, interval="1d")
 
     if df is None or len(df) == 0:
         return pd.DataFrame()
