@@ -210,6 +210,9 @@ def fetch_prices_yq(tickers, start, end):
 
     return df
 
+def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    return prices.pct_change()
+
 TRADING_DAYS = 252
 
 def portfolio_stats(returns: pd.DataFrame, weights, rf=0.0):
