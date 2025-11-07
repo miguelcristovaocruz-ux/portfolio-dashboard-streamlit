@@ -169,27 +169,46 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    fuso = pytz.timezone("America/Sao_Paulo")
-
-    adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=1)
+    """
+    Baixa preços diários via YahooQuery e garante que o histórico seja contínuo:
+    - Inclui o último pregão mesmo que o Yahoo ainda não tenha publicado.
+    - Reindexa com todos os dias úteis e preenche automaticamente com o último valor conhecido.
+    """
+    adjusted_end = pd.to_datetime(end) + pd.Timedelta(days=0)
 
     t = Ticker(tickers, asynchronous=True)
     df = t.history(start=start, end=adjusted_end)
+
     if df is None or len(df) == 0:
-    
         return pd.DataFrame()
-    
+
+    # Corrige formato e colunas
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
+
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
-    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None).dt.date
-    df = df.pivot(index="date", columns="symbol", values="price").sort_index()
-    return df.dropna(how="all", axis=1)
 
-def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return prices.pct_change().dropna(how="all")
+    # Ajusta fuso para NYSE e remove timezone
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_convert("America/New_York")
+    df["date"] = df["date"].dt.tz_localize(None).dt.normalize()
+
+    # Pivot em formato largo
+    df = df.pivot(index="date", columns="symbol", values="price").sort_index()
+
+    # Garante frequência contínua de dias úteis
+    all_days = pd.bdate_range(start=start, end=end)
+    df = df.reindex(all_days)
+
+    # 🟢 Preenche buracos automaticamente com último valor conhecido
+    df = df.ffill().bfill().dropna(how="all", axis=1)
+
+    # Se ainda assim o último dia estiver vazio (Yahoo não atualizou), replica o penúltimo
+    if df.iloc[-1].isna().all() and len(df) > 1:
+        df.iloc[-1] = df.iloc[-2]
+
+    return df
 
 TRADING_DAYS = 252
 
