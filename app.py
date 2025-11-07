@@ -186,10 +186,11 @@ def fetch_prices_yq(tickers, start, end):
     
     all_days = pd.date_range(start=start, end=end, freq="B").date
     df = df.set_index("date") 
-    df = df.reindex(all_days).reset_index().rename(columns={"index": "date"})
-    
+        
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
     
+    df = df.reindex(all_days).reset_index().rename(columns={"index": "date"})
+
     return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
