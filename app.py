@@ -193,7 +193,7 @@ def fetch_prices_yq(tickers, start, end):
     return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return prices.pct_change(fill_method=None).dropna(how="all", axis=1)
+    return prices.pct_change(fill_method=None).dropna(how="all")
 
 TRADING_DAYS = 252
 
