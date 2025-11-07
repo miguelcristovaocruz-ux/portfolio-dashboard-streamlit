@@ -172,7 +172,7 @@ def fetch_prices_yq(tickers, start, end):
     fuso = pytz.timezone("America/Sao_Paulo")
 
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=end + dt.timedelta(days=1), interval="1d")
+    df = t.history(start=start, end=end + dt.timedelta(days=1), freq = "B")
     if df is None or len(df) == 0:
     
         return pd.DataFrame()
@@ -184,8 +184,7 @@ def fetch_prices_yq(tickers, start, end):
     df = df.rename(columns={col_price: "price"})
     df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None).dt.date
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
-    all_days = pd.date_range(start=start, end=end, freq="B").date
-    df = df.reindex(all_days)
+    
     return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
