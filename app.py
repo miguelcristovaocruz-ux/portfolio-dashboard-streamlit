@@ -44,19 +44,19 @@ def export_to_excel(dfs: dict[str, pd.DataFrame]) -> bytes:
     return output.getvalue()
 
 # --- ⬇️ AGORA ENTRA AQUI O LIVRO DE ORDENS (TRADES_BOOK) ---
-TRADES_BOOK =  [
+TRADES_BOOK = [
     {"date": dt.date(2025, 9, 1),  "ticker": "SPY", "qty":  46_000,  "price": 647.47},
     {"date": dt.date(2025, 9, 1),  "ticker": "FXE", "qty":  92_000,  "price": 107.68},
     {"date": dt.date(2025, 9, 1),  "ticker": "XLE", "qty": 110_000,  "price":  89.94},
     {"date": dt.date(2025, 9, 1),  "ticker": "GLD", "qty":  47_000,  "price": 314.72},
     {"date": dt.date(2025, 9, 1),  "ticker": "XLP", "qty": -185_000, "price":  80.44},  # short
     {"date": dt.date(2025, 9, 1),  "ticker": "XLP", "qty":  185_000, "price":  80.52},  # stop (zerando)
-    {"date": dt.date(2025, 9, 8),  "ticker": "XLE", "qty": -110_000, "price":  86.77},  # stop (zerando)
-    {"date": dt.date(2025, 9, 22), "ticker": "XLK", "qty":  54_000,  "price": 278.15},
-    {"date": dt.date(2025, 9, 22), "ticker": "GLD", "qty":  15_000,  "price": 342.75},
-    {"date": dt.date(2025, 9, 22), "ticker": "XLB", "qty": -111_000, "price":  90.37},  # short
-    {"date": dt.date(2025, 9, 24), "ticker": "XLK", "qty":  19_000,  "price": 277.52},
-    {"date": dt.date(2025, 9, 25), "ticker": "XLK", "qty":  19_000,  "price": 275.96},
+    {"date": dt.date(2025, 9, 1),  "ticker": "XLE", "qty": -110_000, "price":  86.77},  # stop (zerando)
+    {"date": dt.date(2025, 9, 21), "ticker": "XLK", "qty":  54_000,  "price": 278.15},
+    {"date": dt.date(2025, 9, 21), "ticker": "GLD", "qty":  15_000,  "price": 342.75},
+    {"date": dt.date(2025, 9, 21), "ticker": "XLB", "qty": -111_000, "price":  90.37},  # short
+    {"date": dt.date(2025, 9, 21), "ticker": "XLK", "qty":  19_000,  "price": 277.52},
+    {"date": dt.date(2025, 9, 21), "ticker": "XLK", "qty":  19_000,  "price": 275.96},
     {"date": dt.date(2025, 10, 13), "ticker": "XLB", "qty": 111_000, "price": 88.58},    # stop zerando
     {"date": dt.date(2025, 10, 13), "ticker": "FXE", "qty":  -92_000, "price": 106.78}, # stop zerando
     {"date": dt.date(2025, 10, 13), "ticker": "GLD", "qty": 27_000, "price": 376.50}, # aumento de posição
@@ -169,25 +169,38 @@ with st.sidebar.expander("Adicionar compra"):
 
 @st.cache_data(ttl=3600)
 def fetch_prices_yq(tickers, start, end):
-    fuso = pytz.timezone("America/Sao_Paulo")
+    # 🔧 Força datas de entrada a serem timezone-naive
+    start = pd.Timestamp(start).tz_localize(None)
+    end = pd.Timestamp(end).tz_localize(None)
 
     t = Ticker(tickers, asynchronous=True)
-    df = t.history(start=start, end=end)
+    df = t.history(start=start, end=end, interval="1d")
+
     if df is None or len(df) == 0:
-    
         return pd.DataFrame()
-    
+
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
+
     col_price = "adjclose" if "adjclose" in df.columns else "close"
     df = df[["symbol", "date", col_price]].dropna()
     df = df.rename(columns={col_price: "price"})
-    df["date"] = pd.to_datetime(df["date"], utc=True).dt.tz_localize(None).dt.date
+
+    # 🔧 Remove qualquer timezone das datas retornadas
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+
+    # 🔧 Cria DataFrame de preços
     df = df.pivot(index="date", columns="symbol", values="price").sort_index()
+
+    # 🔧 Garante todas as datas úteis, sem timezone
+    all_days = pd.date_range(start=start, end=end, freq="B", tz=None)
+    all_days = all_days.tz_localize(None)  # força a ficar naive
+    df = df.reindex(all_days)
+
     return df.dropna(how="all", axis=1)
 
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return prices.pct_change().dropna(how="all")
+    return prices.pct_change(fill_method=None).dropna(how="all", axis=1)
 
 TRADING_DAYS = 252
 
@@ -379,10 +392,25 @@ def build_portfolio_from_trades(prices_df: pd.DataFrame, trades: list[dict], ini
     # --- Calcula o caixa ao longo do tempo ---
     cash = cash_moves.cumsum() + initial_cash
 
-    cash = cash + 264_000
+    # --- Correção pontual de caixa: gera um DEGRAU a partir da data do ajuste ---
+
+    CORRECAO_DATA  = "2025-10-21"   # <<< coloque a data real do seu ajuste
+    CORRECAO_VALOR = 0      # <<< coloque o valor correto (ex.: 354_000.0)
+
+    flows = pd.Series(0.0, index=cash.index)
+    d = pd.to_datetime(CORRECAO_DATA).normalize()
+    if d not in flows.index:
+        # se cair em fds/feriado ou fora do índice, empurra para o próximo dia disponível
+        pos = flows.index.get_indexer([d], method="bfill")[0]
+        d = flows.index[pos]
+    flows.loc[d] += float(CORRECAO_VALOR)
+
+    # soma o cumulativo do fluxo ao caixa (degrau a partir de d)
+    cash = cash.add(flows.cumsum(), fill_value=0.0)
 
     # --- Valor total do portfólio (ativos + caixa) ---
-    port_value = (holdings * prices_df).sum(axis=1) + cash
+    positions_value = (holdings * prices_df).sum(axis=1)
+    port_value = positions_value.add(cash, fill_value=0.0)
 
     # --- Retornos diários do portfólio ---
     port_ret = port_value.pct_change().fillna(0.0)
@@ -435,7 +463,8 @@ if not use_ledger:
 # Séries do portfólio
 # =========================
 if use_ledger and ledger_ctx is not None:
-    curva_port = (ledger_ctx["port_value"] / ledger_ctx["port_value"].iloc[0]).reindex(rets.index).ffill()
+    serie_port = ledger_ctx["port_value"].reindex(rets.index).ffill()
+    curva_port = serie_port / float(initial_capital)
     port_daily = ledger_ctx["port_ret"].reindex(rets.index).fillna(0.0)
 else:
     port_daily = rets.dot(w_real)
@@ -712,7 +741,7 @@ else:
     final_value = 0.0
 
 # Calcula valor monetário do caixa
-cash_value = cash_percent * final_value
+cash_value = (cash_percent * final_value)
 
 # ---- Exibição ----
 st.markdown("#### 💵 Composição de Caixa (CASH)")
