@@ -71,7 +71,12 @@ TRADES_BOOK =  [
     {"date": dt.date(2025, 11, 3), "ticker": "XLK", "qty": 33_000, "price": 303.56}, # aumentando posição
     {"date": dt.date(2025, 11, 3), "ticker": "XTN", "qty": -88_000, "price": 85.05}, # short
     {"date": dt.date(2025, 11, 3), "ticker": "XLP", "qty": -98_000, "price": 76.12}, # short
-    {"date": dt.date(2025, 11, 6), "ticker": "XLK", "qty": -125_000, "price": 288.65} #fomos stoppados
+    {"date": dt.date(2025, 11, 10), "ticker": "XLK", "qty": -125_000, "price": 288.65}, #fomos stoppados
+    {"date": dt.date(2025, 11, 10), "ticker": "SPY", "qty": -16_500, "price": 680.00}, # redução de posição
+    {"date": dt.date(2025, 11, 10), "ticker": "XLF", "qty": -283_000, "price": 53.00}, # redução de posição
+    {"date": dt.date(2025, 11, 10), "ticker": "XLP", "qty": -32_000, "price": 76.48}, # short adicional
+    {"date": dt.date(2025, 11, 10), "ticker": "XLU", "qty": 223_000, "price": 89.95}, # início de posição
+    {"date": dt.date(2025, 11, 6), "ticker": "XLV", "qty": 137_000, "price": 145.79} # início de posição
 
 ]
 
