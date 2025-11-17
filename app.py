@@ -80,9 +80,9 @@ TRADES_BOOK =  [
     {"date": dt.date(2025, 11, 17), "ticker": "XLF", "qty": -282_000, "price": 53.00}, # stop
     {"date": dt.date(2025, 11, 17), "ticker": "XLP", "qty": 130_000, "price": 76.00}, # stop
     {"date": dt.date(2025, 11, 17), "ticker": "XTN", "qty": 88_000, "price": 82.00}, # stop
-    {"date": dt.date(2025, 11, 17), "ticker": "XLU", "qty": -223_000, "price": 89.00} # stop
-    {"date": dt.date(2025, 11, 17), "ticker": "XLK", "qty": 105_000, "price": 285.45} # início de posição
-    {"date": dt.date(2025, 11, 17), "ticker": "XLK", "qty": 35_000, "price": 286.50} # aumento de posição caso caia 0,5%
+    {"date": dt.date(2025, 11, 17), "ticker": "XLU", "qty": -223_000, "price": 89.00}, # stop
+    {"date": dt.date(2025, 11, 17), "ticker": "XLK", "qty": 105_000, "price": 285.45}, # início de posição
+    {"date": dt.date(2025, 11, 17), "ticker": "XLK", "qty": 35_000, "price": 286.50}, # aumento de posição caso caia 0,5%
     {"date": dt.date(2025, 11, 17), "ticker": "XLK", "qty": 35_000, "price": 285.06} # aumento de posição caso caia mais 0,5%
 
 ]
